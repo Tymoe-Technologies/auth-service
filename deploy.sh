@@ -8,7 +8,7 @@ set -e  # 遇到错误立即退出
 SERVICE_NAME="auth-service-app"
 COMPOSE_FILE="docker-compose.full.yml"
 IMAGE_NAME="auth-service"
-VERSION="2.1.2"  # 从 package.json 同步的版本号
+VERSION="2.2.0"  # 从 package.json 同步的版本号
 
 # 颜色定义
 RED='\033[0;31m'

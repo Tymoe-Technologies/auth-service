@@ -1,6 +1,6 @@
-- # API端点设计文档
+- # API 端点设计文档
 
-# Auth Service v2.1.2 - 第一部分:User用户管理模块
+# Auth Service v2.2.0 - 第一部分:User 用户管理模块
 
 ## 设计原则
 
@@ -39,26 +39,26 @@ json
 **字段说明**:
 
 - `email` (必填, string): 邮箱地址
-- `password` (必填, string): 密码,至少8位,包含大小写字母和数字
-- `name` (可选, string): 姓名,2-50字符
+- `password` (必填, string): 密码,至少 8 位,包含大小写字母和数字
+- `name` (可选, string): 姓名,2-50 字符
 - `phone` (可选, string): 电话号码,国际格式 (如 +16729650830, +8613800138000)
 
 **处理逻辑**:
 
-1. 验证 email 格式 (RFC 5322标准)
-2. 验证 password 强度 (至少8位,包含大小写字母和数字)
+1. 验证 email 格式 (RFC 5322 标准)
+2. 验证 password 强度 (至少 8 位,包含大小写字母和数字)
 3. 验证 phone 格式 (使用 Google libphonenumber,自动识别国家码)
-4. 验证 name 格式 (2-50字符,只允许字母、中文、空格、连字符)
+4. 验证 name 格式 (2-50 字符,只允许字母、中文、空格、连字符)
 5. 检查 email 是否已存在:
-    - 如果存在且 `emailVerifiedAt` 为 null → 删除旧记录和相关 email_verifications,继续注册
-    - 如果存在且 `emailVerifiedAt` 不为 null → 返回 409 错误
+   - 如果存在且 `emailVerifiedAt` 为 null → 删除旧记录和相关 email_verifications,继续注册
+   - 如果存在且 `emailVerifiedAt` 不为 null → 返回 409 错误
 6. 使用 bcrypt 哈希密码 (salt rounds = 10)
 7. 创建 User 记录 (不创建组织,用户稍后在控制台创建)
 8. 生成 6 位数字验证码
 9. 使用 bcrypt 哈希验证码 (salt rounds = 10)
 10. 创建 email_verifications 记录:
     - purpose = 'signup'
-    - expiresAt = 30分钟后
+    - expiresAt = 30 分钟后
     - attempts = 0
     - resendCount = 0
 11. 发送验证邮件 (包含 6 位验证码)
@@ -81,40 +81,40 @@ json
 
 json
 
-`*// 400 - 邮箱格式错误*
+`_// 400 - 邮箱格式错误_
 {
-  "error": "invalid_email_format",
-  "detail": "Please provide a valid email address"
+"error": "invalid_email_format",
+"detail": "Please provide a valid email address"
 }
 
-*// 400 - 密码强度不够*
+_// 400 - 密码强度不够_
 {
-  "error": "weak_password",
-  "detail": "Password must be at least 8 characters with uppercase, lowercase, and numbers"
+"error": "weak_password",
+"detail": "Password must be at least 8 characters with uppercase, lowercase, and numbers"
 }
 
-*// 400 - 电话号码格式错误*
+_// 400 - 电话号码格式错误_
 {
-  "error": "invalid_phone_format",
-  "detail": "Please provide a valid phone number in international format (e.g., +16729650830)"
+"error": "invalid_phone_format",
+"detail": "Please provide a valid phone number in international format (e.g., +16729650830)"
 }
 
-*// 400 - 姓名格式错误*
+_// 400 - 姓名格式错误_
 {
-  "error": "invalid_name_format",
-  "detail": "Name must be 2-50 characters, letters, Chinese characters, spaces, and hyphens only"
+"error": "invalid_name_format",
+"detail": "Name must be 2-50 characters, letters, Chinese characters, spaces, and hyphens only"
 }
 
-*// 409 - 邮箱已注册*
+_// 409 - 邮箱已注册_
 {
-  "error": "email_already_registered",
-  "detail": "This email is already registered and verified. Please try to log in."
+"error": "email_already_registered",
+"detail": "This email is already registered and verified. Please try to log in."
 }
 
-*// 429 - 请求过于频繁*
+_// 429 - 请求过于频繁_
 {
-  "error": "too_many_requests",
-  "detail": "Too many registration attempts. Please try again later."
+"error": "too_many_requests",
+"detail": "Too many registration attempts. Please try again later."
 }`
 
 ---
@@ -135,7 +135,7 @@ json
 **字段说明**:
 
 - `email` (必填, string): 用户邮箱
-- `code` (必填, string): 6位数字验证码
+- `code` (必填, string): 6 位数字验证码
 
 **设计说明**:
 
@@ -146,24 +146,24 @@ json
 **处理逻辑**:
 
 1. 验证 email 格式
-2. 验证 code 格式 (必须是6位数字)
+2. 验证 code 格式 (必须是 6 位数字)
 3. 查询 email_verifications 表:
-    - 条件: email 对应的 userId, purpose='signup', consumedAt IS NULL, expiresAt > NOW()
-    - 按 createdAt DESC 排序,取最新一条
+   - 条件: email 对应的 userId, purpose='signup', consumedAt IS NULL, expiresAt > NOW()
+   - 按 createdAt DESC 排序,取最新一条
 4. 如果找不到记录 → 返回 404 错误 "verification_not_found"
 5. 如果验证码已过期 → 返回 400 错误 "code_expired"
 6. 检查 attempts 次数:
-    - 如果 attempts >= 10 → 返回 429 错误 "too_many_attempts"
+   - 如果 attempts >= 10 → 返回 429 错误 "too_many_attempts"
 7. 使用 bcrypt.compare() 比对 code 和 verificationCodeHash
 8. 如果验证码不匹配:
-    - attempts += 1
-    - 保存记录
-    - 返回 400 错误 "invalid_code"
+   - attempts += 1
+   - 保存记录
+   - 返回 400 错误 "invalid_code"
 9. 如果验证码匹配:
-    - 更新 email_verifications.consumedAt = NOW()
-    - 更新 users.emailVerifiedAt = NOW()
-    - 记录到 audit_logs (action='email_verified')
-    - 返回成功
+   - 更新 email_verifications.consumedAt = NOW()
+   - 更新 users.emailVerifiedAt = NOW()
+   - 记录到 audit_logs (action='email_verified')
+   - 返回成功
 
 **成功响应 (200)**:
 
@@ -182,34 +182,34 @@ json
 
 json
 
-`*// 400 - 验证码格式错误*
+`_// 400 - 验证码格式错误_
 {
-  "error": "invalid_code_format",
-  "detail": "Verification code must be 6 digits"
+"error": "invalid_code_format",
+"detail": "Verification code must be 6 digits"
 }
 
-*// 400 - 验证码错误*
+_// 400 - 验证码错误_
 {
-  "error": "invalid_code",
-  "detail": "Invalid verification code."
+"error": "invalid_code",
+"detail": "Invalid verification code."
 }
 
-*// 400 - 验证码已过期*
+_// 400 - 验证码已过期_
 {
-  "error": "code_expired",
-  "detail": "Verification code has expired. Please request a new one."
+"error": "code_expired",
+"detail": "Verification code has expired. Please request a new one."
 }
 
-*// 404 - 找不到验证记录*
+_// 404 - 找不到验证记录_
 {
-  "error": "verification_not_found",
-  "detail": "No pending verification found for this email. Please register again or request a new code."
+"error": "verification_not_found",
+"detail": "No pending verification found for this email. Please register again or request a new code."
 }
 
-*// 429 - 尝试次数过多*
+_// 429 - 尝试次数过多_
 {
-  "error": "too_many_attempts",
-  "detail": "Too many failed attempts. Please request a new verification code."
+"error": "too_many_attempts",
+"detail": "Too many failed attempts. Please request a new verification code."
 }`
 
 ---
@@ -236,29 +236,29 @@ json
 
 - **为什么用 POST**: 虽然是"重新发送",但会创建新的验证码记录,属于资源创建操作
 - **防滥用机制**:
-    - 限制重发频率 (同一邮箱 60 秒内只能请求一次)
-    - 限制重发次数 (同一验证会话最多重发 5 次)
-    - Redis 速率限制
+  - 限制重发频率 (同一邮箱 60 秒内只能请求一次)
+  - 限制重发次数 (同一验证会话最多重发 5 次)
+  - Redis 速率限制
 
 **处理逻辑**:
 
 1. 验证 email 格式
 2. 验证 purpose 枚举值
 3. 查询对应的 User 记录:
-    - 如果 purpose='signup' 且 emailVerifiedAt 不为 null → 返回 400 "already_verified"
-    - 如果找不到用户 → 返回 404 "user_not_found"
+   - 如果 purpose='signup' 且 emailVerifiedAt 不为 null → 返回 400 "already_verified"
+   - 如果找不到用户 → 返回 404 "user_not_found"
 4. 检查 Redis 速率限制:
-    - Key: `resend:${email}:${purpose}`
-    - 如果存在 → 返回 429 "too_soon"
-    - 设置 60 秒过期
+   - Key: `resend:${email}:${purpose}`
+   - 如果存在 → 返回 429 "too_soon"
+   - 设置 60 秒过期
 5. 查询最新的 email_verifications 记录 (未消费的)
 6. 检查 resendCount:
-    - 如果 >= 5 → 返回 429 "resend_limit_exceeded"
+   - 如果 >= 5 → 返回 429 "resend_limit_exceeded"
 7. 标记旧验证码为过期 (设置 expiresAt = NOW())
 8. 生成新的 6 位验证码
 9. 创建新的 email_verifications 记录:
-    - resendCount = 旧记录的 resendCount + 1
-    - expiresAt = 30 分钟后
+   - resendCount = 旧记录的 resendCount + 1
+   - expiresAt = 30 分钟后
 10. 发送验证邮件
 11. 记录到 audit_logs
 12. 返回成功
@@ -280,28 +280,28 @@ json
 
 json
 
-`*// 400 - 邮箱已验证*
+`_// 400 - 邮箱已验证_
 {
-  "error": "already_verified",
-  "detail": "This email is already verified. You can log in directly."
+"error": "already_verified",
+"detail": "This email is already verified. You can log in directly."
 }
 
-*// 404 - 用户不存在*
+_// 404 - 用户不存在_
 {
-  "error": "user_not_found",
-  "detail": "No account found with this email address."
+"error": "user_not_found",
+"detail": "No account found with this email address."
 }
 
-*// 429 - 请求过快*
+_// 429 - 请求过快_
 {
-  "error": "too_soon",
-  "detail": "Please wait 60 seconds before requesting another verification code."
+"error": "too_soon",
+"detail": "Please wait 60 seconds before requesting another verification code."
 }
 
-*// 429 - 超过重发次数*
+_// 429 - 超过重发次数_
 {
-  "error": "resend_limit_exceeded",
-  "detail": "Maximum resend limit reached. Please try registering again."
+"error": "resend_limit_exceeded",
+"detail": "Maximum resend limit reached. Please try registering again."
 }`
 
 ---
@@ -330,27 +330,27 @@ json
 2. 查询 User 记录 (by email)
 3. 如果用户不存在 → 返回 401 "invalid_credentials" (不泄露用户是否存在)
 4. 检查账户状态:
-    - 如果 emailVerifiedAt 为 null → 返回 401 "account_not_verified"
-    - 如果 lockedUntil 不为 null 且 > NOW() → 返回 423 "account_locked"
+   - 如果 emailVerifiedAt 为 null → 返回 401 "account_not_verified"
+   - 如果 lockedUntil 不为 null 且 > NOW() → 返回 423 "account_locked"
 5. 使用 bcrypt.compare() 验证密码
 6. 如果密码错误:
-    - loginFailureCount += 1
-    - lastLoginFailureAt = NOW()
-    - 如果 loginFailureCount >= LOGIN_LOCK_THRESHOLD (默认10次):
-        - lockedUntil = NOW() + LOGIN_LOCK_MINUTES (默认30分钟)
-        - lockReason = 'max_failures'
-    - 保存 User 记录
-    - 记录到 login_attempts (success=false, ipAddress, userAgent, organizationId=null)
-    - 返回 401 "invalid_credentials"
+   - loginFailureCount += 1
+   - lastLoginFailureAt = NOW()
+   - 如果 loginFailureCount >= LOGIN_LOCK_THRESHOLD (默认 10 次):
+     - lockedUntil = NOW() + LOGIN_LOCK_MINUTES (默认 30 分钟)
+     - lockReason = 'max_failures'
+   - 保存 User 记录
+   - 记录到 login_attempts (success=false, ipAddress, userAgent, organizationId=null)
+   - 返回 401 "invalid_credentials"
 7. 如果密码正确:
-    - 重置 loginFailureCount = 0, lastLoginFailureAt = null, lockedUntil = null, lockReason = null
-    - 保存 User 记录
-    - 记录到 login_attempts (success=true, ipAddress, userAgent)
-    - 查询该用户的所有 organizations:
-        - 条件: userId = 当前用户
-        - 按 createdAt ASC 排序
-    - 记录到 audit_logs (action='user_login')
-    - 返回用户信息和筛选后的组织列表
+   - 重置 loginFailureCount = 0, lastLoginFailureAt = null, lockedUntil = null, lockReason = null
+   - 保存 User 记录
+   - 记录到 login_attempts (success=true, ipAddress, userAgent)
+   - 查询该用户的所有 organizations:
+     - 条件: userId = 当前用户
+     - 按 createdAt ASC 排序
+   - 记录到 audit_logs (action='user_login')
+   - 返回用户信息和筛选后的组织列表
 
 **成功响应 (200)**:
 
@@ -393,23 +393,23 @@ json
 
 json
 
-`*// 401 - 账户未验证*
+`_// 401 - 账户未验证_
 {
-  "error": "account_not_verified",
-  "detail": "Please verify your email address before logging in."
+"error": "account_not_verified",
+"detail": "Please verify your email address before logging in."
 }
 
-*// 401 - 邮箱或密码错误*
+_// 401 - 邮箱或密码错误_
 {
-  "error": "invalid_credentials",
-  "detail": "Email or password is incorrect."
+"error": "invalid_credentials",
+"detail": "Email or password is incorrect."
 }
 
-*// 423 - 账户已锁定*
+_// 423 - 账户已锁定_
 {
-  "error": "account_locked",
-  "detail": "Account is locked due to too many failed login attempts. Please try again in 30 minutes or contact support.",
-  "lockedUntil": "2025-01-15T09:30:00.000Z"
+"error": "account_locked",
+"detail": "Account is locked due to too many failed login attempts. Please try again in 30 minutes or contact support.",
+"lockedUntil": "2025-01-15T09:30:00.000Z"
 }`
 
 ---
@@ -465,7 +465,7 @@ client_id=tymoe-web           // 必须
       "orgType": "MAIN",
       "productType": "hair-salon",
       "parentOrgId": null,
-      "role": "USER", 
+      "role": "USER",
       "status": "ACTIVE"
     },
     {
@@ -487,14 +487,14 @@ client_id=tymoe-web           // 必须
       "status": "ACTIVE"
     }
   ],
-  
+
   "iat": 1728692400,
-  "exp": 1728696000,  // 60分钟后过期 (示例时间戳)
+  "exp": 1728696000, // 60分钟后过期 (示例时间戳)
   "jti": "unique-token-id-xyz"
 }
 ```
 
-7. 生成 **refresh_token** 并存入数据库（30天有效，Uber方式）
+7. 生成 **refresh_token** 并存入数据库（30 天有效，Uber 方式）
 
 **成功响应 (200)**:
 
@@ -542,28 +542,28 @@ client_id=tymoe-web
   "accountType": "MANAGER",
   "username": "manager001",
   "employeeNumber": "EMP001",
-  "organizations": 
-    {
-      "id": "org-franchise-uuid-101",
-      "orgName": "本拿比加盟店",
-      "orgType": "FRANCHISE",
-      "productType": "cafe",
-      "parentOrgId": "org-main-uuid-456", // 关联到总店
-      "role": "MANAGER",   // 推荐：当前用户在该组织的角色
-      "status": "ACTIVE"
-    },
+  "organizations": {
+    "id": "org-franchise-uuid-101",
+    "orgName": "本拿比加盟店",
+    "orgType": "FRANCHISE",
+    "productType": "cafe",
+    "parentOrgId": "org-main-uuid-456", // 关联到总店
+    "role": "MANAGER", // 推荐：当前用户在该组织的角色
+    "status": "ACTIVE"
+  },
   "iat": 1728692400,
-  "exp": 1728696000,  // 60分钟后过期 (示例时间戳)
+  "exp": 1728696000, // 60分钟后过期 (示例时间戳)
   "jti": "unique-token-id-xyz"
 }
 ```
 
 **权限说明**:
+
 - **OWNER**: 可以登录后台
 - **MANAGER**: 可以登录后台
 - **STAFF**: 不允许后台登录
 
-7. 生成 **refresh_token**（30天有效）
+7. 生成 **refresh_token**（30 天有效）
 
 **成功响应 (200)**:
 
@@ -576,7 +576,7 @@ client_id=tymoe-web
 }
 ```
 
-### 场景3: Account POS 登录 (Owner/Manager/Staff)
+### 场景 3: Account POS 登录 (Owner/Manager/Staff)
 
 **请求头**:
 
@@ -598,23 +598,23 @@ pin_code=1234`
 2. 从请求头提取 `X-Device-ID` 和 `X-Session-Token`
 3. 如果缺少 X-Device-ID 或 X-Session-Token → 返回 400 "missing_device_credentials"
 4. 查询 Device:
-    - 验证 device 存在且 status = 'ACTIVE'
-    - 如果不存在或状态不对 → 返回 403 "device_not_authorized"
+   - 验证 device 存在且 status = 'ACTIVE'
+   - 如果不存在或状态不对 → 返回 403 "device_not_authorized"
 5. 查询 DeviceSession:
-    - 计算 sessionToken 的 SHA-256 哈希值
-    - 查询 device_sessions 表验证 sessionTokenHash 匹配
-    - 如果不匹配或 session 不存在 → 返回 403 "invalid_session"
+   - 计算 sessionToken 的 SHA-256 哈希值
+   - 查询 device_sessions 表验证 sessionTokenHash 匹配
+   - 如果不匹配或 session 不存在 → 返回 403 "invalid_session"
 6. 查询该设备所属组织的 Account (通过 pin_code):
-    - 使用 bcrypt 验证 pinCode
-    - 如果 PIN 错误 → 返回 401 "invalid_credentials"
+   - 使用 bcrypt 验证 pinCode
+   - 如果 PIN 错误 → 返回 401 "invalid_credentials"
 7. 验证组织 status = 'ACTIVE'
 8. 更新 DeviceSession.lastActiveAt = NOW()
 9. 记录到 login_attempts 和 audit_logs
-10. 生成 access_token (4.5小时有效，无 refresh_token)
+10. 生成 access_token (4.5 小时有效，无 refresh_token)
 
 **生成的 access_token (JWT):**
 
-```json
+````json
 {
   "sub": "account-uuid",
   "userType": "ACCOUNT",
@@ -661,23 +661,25 @@ json
   "token_type": "Bearer",
   "expires_in": 16200
 }`
-```
+````
 
 ---
 
 **注意事项**:
 
 1. **User vs Account 区分**:
+
    - User: `username` 字段包含 `@` 符号（邮箱格式）
    - Account: `username` 字段不包含 `@` 符号（真实用户名）
 
 2. **Refresh Token 机制**:
-   - User/Account 后台登录: 30天固定不变（Uber方式）
-   - Account POS 登录: 无 refresh_token（access_token 4.5小时）
+
+   - User/Account 后台登录: 30 天固定不变（Uber 方式）
+   - Account POS 登录: 无 refresh_token（access_token 4.5 小时）
 
 3. **响应格式统一**:
    - User/Account 后台登录只返回 4 个字段：`access_token`, `refresh_token`, `token_type`, `expires_in`
-   - Account POS登录只返回3个字段:`access_token`, `token_type`, `expires_in`
+   - Account POS 登录只返回 3 个字段:`access_token`, `token_type`, `expires_in`
 
 ---
 
@@ -712,7 +714,7 @@ client_id=tymoe-web
 
 **User/Account 登录的响应示例**:
 
-```json
+````json
 {
   "access_token": "eyJhbGci...",  // 新的 JWT
   "refresh_token": "550e8400-e29b-41d4-a716-446655440000",  // 原来的，不变
@@ -734,7 +736,7 @@ client_id=tymoe-web
       "orgType": "MAIN",
       "productType": "hair-salon",
       "parentOrgId": null,
-      "role": "USER", 
+      "role": "USER",
       "status": "ACTIVE"
     },
     {
@@ -769,14 +771,14 @@ client_id=tymoe-web
   "exp": 1728696000,  // 新的过期时间
   "jti": "new-unique-id"  // 新的 JTI
 }
-```
+````
 
 **User 登录的响应示例**:
 
 ```json
 {
-  "access_token": "eyJhbGci...",  // 新的 JWT
-  "refresh_token": "uuid-format-token",  // 原来的，不变
+  "access_token": "eyJhbGci...", // 新的 JWT
+  "refresh_token": "uuid-format-token", // 原来的，不变
   "token_type": "Bearer",
   "expires_in": 3600
 }
@@ -810,8 +812,8 @@ client_id=tymoe-web
 
 ```json
 {
-  "access_token": "eyJhbGci...",  // 新的 JWT
-  "refresh_token": "uuid-format-token",  // 原来的，不变
+  "access_token": "eyJhbGci...", // 新的 JWT
+  "refresh_token": "uuid-format-token", // 原来的，不变
   "token_type": "Bearer",
   "expires_in": 3600
 }
@@ -824,18 +826,21 @@ client_id=tymoe-web
 **设计说明**:
 
 1. **Uber 方式 (User/Account 后台登录)**:
-   - Refresh Token **30天固定不变**
+
+   - Refresh Token **30 天固定不变**
    - 每次刷新只生成新的 Access Token
    - 简化前端逻辑，无需每次更新 RT
 
 2. **刷新的好处**:
+
    - User: 获取最新的组织列表
    - Account: 保持 token 活跃状态
    - 新的 JTI 便于 token 撤销管理
 
 3. **安全措施**:
+
    - 每次刷新更新 `lastSeenAt`（检测异常频率）
-   - 30天后强制重新登录
+   - 30 天后强制重新登录
    - 登出时撤销 RT 并将 AT 的 JTI 加入黑名单
 
 4. **Account POS 登录例外**:
@@ -871,14 +876,14 @@ json
 
 1. 从 Bearer token 中提取 userId 和 jti
 2. 验证 refresh_token:
-    - 查询 refresh_tokens 表 (by id = refresh_token)
-    - 如果找到且 subjectUserId 匹配:
-        - 撤销该 token: status = 'REVOKED', revokedAt = NOW(), revokeReason = 'user_logout'
-        - 撤销同家族的所有 token (by familyId, status='ACTIVE')
+   - 查询 refresh_tokens 表 (by id = refresh_token)
+   - 如果找到且 subjectUserId 匹配:
+     - 撤销该 token: status = 'REVOKED', revokedAt = NOW(), revokeReason = 'user_logout'
+     - 撤销同家族的所有 token (by familyId, status='ACTIVE')
 3. 将 access_token 的 jti 加入 Redis 黑名单:
-    - Key: `token:blacklist:${jti}`
-    - Value: "1"
-    - TTL: access_token 的剩余有效时间 (exp - now)
+   - Key: `token:blacklist:${jti}`
+   - Value: "1"
+   - TTL: access_token 的剩余有效时间 (exp - now)
 4. 记录到 audit_logs (action='user_logout')
 5. 返回成功
 
@@ -916,16 +921,16 @@ json
 2. 查询 User 记录
 3. 如果用户不存在 → **仍然返回成功** (安全考虑,不泄露用户是否存在)
 4. 如果用户存在:
-    - 检查 Redis 速率限制 (同一邮箱 1 分钟内只能请求一次)
-    - 如果超限 → 返回 429
-    - 生成 6 位数字验证码
-    - 使用 bcrypt 哈希验证码
-    - 标记旧的 password_reset 记录为过期 (设置 expiresAt = NOW())
-    - 创建新的 email_verifications 记录:
-        - purpose = 'password_reset'
-        - expiresAt = 10 分钟后 (比注册验证码更短,安全考虑)
-    - 发送重置密码邮件
-    - 记录到 audit_logs
+   - 检查 Redis 速率限制 (同一邮箱 1 分钟内只能请求一次)
+   - 如果超限 → 返回 429
+   - 生成 6 位数字验证码
+   - 使用 bcrypt 哈希验证码
+   - 标记旧的 password_reset 记录为过期 (设置 expiresAt = NOW())
+   - 创建新的 email_verifications 记录:
+     - purpose = 'password_reset'
+     - expiresAt = 10 分钟后 (比注册验证码更短,安全考虑)
+   - 发送重置密码邮件
+   - 记录到 audit_logs
 5. 返回成功
 
 **成功响应 (200)**:
@@ -966,23 +971,23 @@ json
 **处理逻辑**:
 
 1. 验证 email 格式
-2. 验证 code 格式 (6位数字)
+2. 验证 code 格式 (6 位数字)
 3. 验证 password 强度
 4. 查询 email_verifications:
-    - 条件: purpose='password_reset', email 对应的 userId, consumedAt IS NULL, expiresAt > NOW()
+   - 条件: purpose='password_reset', email 对应的 userId, consumedAt IS NULL, expiresAt > NOW()
 5. 验证码校验逻辑同 1.2:
-    - 如果找不到 → 404 "verification_not_found"
-    - 如果已过期 → 400 "code_expired"
-    - 如果尝试次数 >= 10 → 429 "too_many_attempts"
-    - 验证码错误 → attempts++, 返回 400 "invalid_code"
+   - 如果找不到 → 404 "verification_not_found"
+   - 如果已过期 → 400 "code_expired"
+   - 如果尝试次数 >= 10 → 429 "too_many_attempts"
+   - 验证码错误 → attempts++, 返回 400 "invalid_code"
 6. 如果验证码正确:
-    - 使用 bcrypt 哈希新密码
-    - 更新 users.passwordHash
-    - 标记验证码为已使用: consumedAt = NOW()
-    - 撤销该用户的所有 refresh_tokens (安全考虑):
-        - 更新 refresh_tokens: status = 'REVOKED', revokedAt = NOW(), revokeReason = 'password_reset'
-    - 记录到 audit_logs (action='password_reset')
-    - 返回成功
+   - 使用 bcrypt 哈希新密码
+   - 更新 users.passwordHash
+   - 标记验证码为已使用: consumedAt = NOW()
+   - 撤销该用户的所有 refresh_tokens (安全考虑):
+     - 更新 refresh_tokens: status = 'REVOKED', revokedAt = NOW(), revokeReason = 'password_reset'
+   - 记录到 audit_logs (action='password_reset')
+   - 返回成功
 
 **成功响应 (200)**:
 
@@ -1027,8 +1032,8 @@ json
 7. 使用 bcrypt 哈希新密码
 8. 更新 users.passwordHash
 9. 撤销该用户的所有 refresh_tokens (除了当前使用的):
-    - 从当前 access_token 的 jti 找到对应的 refresh_token familyId
-    - 撤销其他 familyId 的所有 refresh_tokens
+   - 从当前 access_token 的 jti 找到对应的 refresh_token familyId
+   - 撤销其他 familyId 的所有 refresh_tokens
 10. 记录到 audit_logs (action='password_change')
 11. 返回成功
 
@@ -1045,16 +1050,16 @@ json
 
 json
 
-`*// 400 - 新旧密码相同*
+`_// 400 - 新旧密码相同_
 {
-  "error": "same_password",
-  "detail": "New password must be different from the current password"
+"error": "same_password",
+"detail": "New password must be different from the current password"
 }
 
-*// 401 - 当前密码错误*
+_// 401 - 当前密码错误_
 {
-  "error": "invalid_current_password",
-  "detail": "Current password is incorrect"
+"error": "invalid_current_password",
+"detail": "Current password is incorrect"
 }`
 
 ---
@@ -1123,8 +1128,8 @@ json
 
 1. 从 token 中提取 userId
 2. 验证提供的字段格式:
-    - name: 2-50字符
-    - phone: 使用 libphonenumber 验证
+   - name: 2-50 字符
+   - phone: 使用 libphonenumber 验证
 3. 更新 User 记录 (只更新提供的字段)
 4. 记录到 audit_logs (action='profile_update', detail 中记录更新的字段)
 5. 返回更新后的信息
@@ -1148,7 +1153,7 @@ json
 
 ---
 
-### 1.13 修改邮箱 (第1步: 请求验证码)
+### 1.13 修改邮箱 (第 1 步: 请求验证码)
 
 **端点**: `POST /api/auth-service/v1/identity/change-email`
 
@@ -1175,8 +1180,8 @@ json
 4. 如果密码错误 → 返回 401 "invalid_password"
 5. 验证 newEmail 格式
 6. 检查 newEmail 是否已被其他用户使用:
-    - 查询 users 表 (by email = newEmail, emailVerifiedAt IS NOT NULL)
-    - 如果存在 → 返回 409 "email_already_used"
+   - 查询 users 表 (by email = newEmail, emailVerifiedAt IS NOT NULL)
+   - 如果存在 → 返回 409 "email_already_used"
 7. 检查 Redis 速率限制 (同一 userId 5 分钟内只能请求一次)
 8. 生成 6 位验证码
 9. 使用 bcrypt 哈希验证码
@@ -1207,27 +1212,27 @@ json
 
 json
 
-`*// 401 - 密码错误*
+`_// 401 - 密码错误_
 {
-  "error": "invalid_password",
-  "detail": "Password is incorrect"
+"error": "invalid_password",
+"detail": "Password is incorrect"
 }
 
-*// 409 - 邮箱已被使用*
+_// 409 - 邮箱已被使用_
 {
-  "error": "email_already_used",
-  "detail": "This email address is already registered"
+"error": "email_already_used",
+"detail": "This email address is already registered"
 }
 
-*// 429 - 请求过于频繁*
+_// 429 - 请求过于频繁_
 {
-  "error": "too_many_requests",
-  "detail": "Please wait 5 minutes before requesting another email change"
+"error": "too_many_requests",
+"detail": "Please wait 5 minutes before requesting another email change"
 }`
 
 ---
 
-### 1.14 修改邮箱 (第2步: 确认验证码)
+### 1.14 修改邮箱 (第 2 步: 确认验证码)
 
 **端点**: `POST /api/auth-service/v1/identity/verification-email-change`
 
@@ -1249,20 +1254,20 @@ json
 
 1. 从 token 中提取 userId
 2. 查询 email_verifications:
-    - 条件: userId, purpose='email_change', consumedAt IS NULL, expiresAt > NOW()
+   - 条件: userId, purpose='email_change', consumedAt IS NULL, expiresAt > NOW()
 3. 验证码校验逻辑同 1.2
 4. 如果验证码正确:
-    - 从 detail 字段提取 newEmail
-    - 再次检查 newEmail 是否已被其他用户使用 (防止竞态条件)
-    - 如果已被使用 → 返回 409 "email_already_used"
-    - 更新 users.email = newEmail
-    - 更新 users.updatedAt = NOW()
-    - 标记验证码为已使用: consumedAt = NOW()
-    - 撤销该用户的所有 refresh_tokens (安全考虑,邮箱变更需要重新登录):
-        - status = 'REVOKED', revokedAt = NOW(), revokeReason = 'email_changed'
-    - 将当前 access_token 的 jti 加入 Redis 黑名单 (立即失效)
-    - 记录到 audit_logs (action='email_changed', detail 中记录 oldEmail 和 newEmail)
-    - 返回成功
+   - 从 detail 字段提取 newEmail
+   - 再次检查 newEmail 是否已被其他用户使用 (防止竞态条件)
+   - 如果已被使用 → 返回 409 "email_already_used"
+   - 更新 users.email = newEmail
+   - 更新 users.updatedAt = NOW()
+   - 标记验证码为已使用: consumedAt = NOW()
+   - 撤销该用户的所有 refresh_tokens (安全考虑,邮箱变更需要重新登录):
+     - status = 'REVOKED', revokedAt = NOW(), revokeReason = 'email_changed'
+   - 将当前 access_token 的 jti 加入 Redis 黑名单 (立即失效)
+   - 记录到 audit_logs (action='email_changed', detail 中记录 oldEmail 和 newEmail)
+   - 返回成功
 
 **成功响应 (200)**:
 
@@ -1285,19 +1290,19 @@ json
 1. **注册流程**: 注册时只创建 User 账号,不创建组织
 2. **OAuth2 标准**: 登录接口不直接返回 token,需调用 `/oauth/token`
 3. **Token 设计**:
-    - Access token: 60分钟过期,包含 userId, productType, organizationIds, orgType等
-    - Refresh token: 90天过期,支持家族化管理和轮换
+   - Access token: 60 分钟过期,包含 userId, productType, organizationIds, orgType 等
+   - Refresh token: 90 天过期,支持家族化管理和轮换
 4. **登出安全**: 撤销 refresh_token 家族 + access_token jti 加入 Redis 黑名单
 5. **验证码机制**:
-    - 6位数字验证码
-    - bcrypt 哈希存储
-    - 最多尝试10次
-    - 最多重发5次
-    - 30分钟过期 (密码重置10分钟)
+   - 6 位数字验证码
+   - bcrypt 哈希存储
+   - 最多尝试 10 次
+   - 最多重发 5 次
+   - 30 分钟过期 (密码重置 10 分钟)
 6. **账户安全**:
-    - 10次登录失败后锁定30分钟
-    - 所有密码使用 bcrypt (salt rounds = 10)
-    - 速率限制通过 Redis 实现
+   - 10 次登录失败后锁定 30 分钟
+   - 所有密码使用 bcrypt (salt rounds = 10)
+   - 速率限制通过 Redis 实现
 7. **审计日志**: 所有重要操作记录到 audit_logs
 
 ### 数据库表依赖
@@ -1310,13 +1315,13 @@ json
 
 ### Redis Keys
 
-- `resend:${email}:${purpose}` - 重发限制 (60秒)
+- `resend:${email}:${purpose}` - 重发限制 (60 秒)
 - `token:blacklist:${jti}` - Token 黑名单 (TTL = token 剩余时间)
 - 其他速率限制 keys (登录、注册、密码重置等)
 
 ---
 
-# Auth Service v2.1.2 - 第二部分:Organization组织管理模块
+# Auth Service v2.2.0 - 第二部分:Organization 组织管理模块
 
 ## 2️⃣ Organization 组织管理模块 (`/api/auth-service/v1/organizations`)
 
@@ -1331,8 +1336,8 @@ json
 **组织类型**:
 
 - **MAIN (主店)**: 老板的第一个店铺, parentOrgId = null
-- **BRANCH (分店)**: 分店, parentOrgId = 主店ID
-- **FRANCHISE (加盟店)**: 加盟店, parentOrgId = 主店ID
+- **BRANCH (分店)**: 分店, parentOrgId = 主店 ID
+- **FRANCHISE (加盟店)**: 加盟店, parentOrgId = 主店 ID
 
 **组织类型区别**:
 
@@ -1369,11 +1374,11 @@ json
 
 **字段说明**:
 
-- `orgName` (必填, string): 组织名称, 2-100字符
+- `orgName` (必填, string): 组织名称, 2-100 字符
 - `orgType` (必填, enum): 组织类型, "MAIN" | "BRANCH" | "FRANCHISE"
-- `parentOrgId` (条件必填, UUID): 父组织ID
-    - MAIN: 必须为 null
-    - BRANCH/FRANCHISE: 必填,必须是自己拥有的 MAIN 组织
+- `parentOrgId` (条件必填, UUID): 父组织 ID
+  - MAIN: 必须为 null
+  - BRANCH/FRANCHISE: 必填,必须是自己拥有的 MAIN 组织
 - `productType` (必填, enum): 店铺类型, "beauty_salon" | "hair_salon" | "spa" | "restaurant" | "fast_food" | "cafe " | "beverage" | "home_studio" | "fitness" | "yoga_studio" | "retail" | "chinese_restautant" | "clinic" | "liquor_store" | "other"
 - `description` (可选, text): 描述
 - `location` (可选, string): 店铺地址
@@ -1383,24 +1388,24 @@ json
 **处理逻辑**:
 
 1. 从 access_token 中提取 userId
-2. 验证 orgName 格式 (2-100字符)
+2. 验证 orgName 格式 (2-100 字符)
 3. 验证 phone 格式 (使用 libphonenumber)
 4. 验证 email 格式
 5. 根据 orgType 验证 parentOrgId:
-    - 如果 orgType = 'MAIN':
-        - parentOrgId 必须为 null
-        - 用户可以拥有多个不同品牌的 MAIN 组织（例如：既是7分甜的老板，又是名创优品的老板）
-    - 如果 orgType = 'BRANCH' 或 'FRANCHISE':
-        - parentOrgId 必填
-        - 查询 parent 组织,验证:
-            - 存在且 userId = 当前用户
-            - orgType = 'MAIN'
-            - productType = 'productType'
-            - status = 'ACTIVE'
-        - 如果验证失败 → 返回 400 "invalid_parent_org"
+   - 如果 orgType = 'MAIN':
+     - parentOrgId 必须为 null
+     - 用户可以拥有多个不同品牌的 MAIN 组织（例如：既是 7 分甜的老板，又是名创优品的老板）
+   - 如果 orgType = 'BRANCH' 或 'FRANCHISE':
+     - parentOrgId 必填
+     - 查询 parent 组织,验证:
+       - 存在且 userId = 当前用户
+       - orgType = 'MAIN'
+       - productType = 'productType'
+       - status = 'ACTIVE'
+     - 如果验证失败 → 返回 400 "invalid_parent_org"
 6. 创建 Organization 记录:
-    - userId = 当前用户 ID (老板)
-    - status = 'ACTIVE'
+   - userId = 当前用户 ID (老板)
+   - status = 'ACTIVE'
 7. 记录到 audit_logs (action='org_created')
 8. 返回创建的组织信息
 
@@ -1427,10 +1432,10 @@ json
 
 **错误响应**:
 
-`*// 400 - 父组织无效*
+`_// 400 - 父组织无效_
 {
-  "error": "invalid_parent_org",
-  "detail": "Parent organization must be a MAIN organization that you own with matching product type"
+"error": "invalid_parent_org",
+"detail": "Parent organization must be a MAIN organization that you own with matching product type"
 }
 
 `
@@ -1449,17 +1454,17 @@ json
 
 - `orgType` (可选, enum): 按组织类型筛选, "MAIN" | "BRANCH" | "FRANCHISE"
 - `status` (可选, enum): 按状态筛选, "ACTIVE" | "SUSPENDED" | "DELETED"
-    - 默认只返回 ACTIVE
+  - 默认只返回 ACTIVE
 
 **处理逻辑**:
 
 1. 从 access_token 中提取 userId 和 productType
 2. 查询 organizations 表:
-    - 条件: userId = 当前用户
-    - 如果指定了 orgType → AND orgType = ?
-    - 如果指定了 status → AND status = ?
-    - 如果未指定 status → 默认只返回 ACTIVE
-3. 按 orgType (MAIN优先), createdAt ASC 排序
+   - 条件: userId = 当前用户
+   - 如果指定了 orgType → AND orgType = ?
+   - 如果指定了 status → AND status = ?
+   - 如果未指定 status → 默认只返回 ACTIVE
+3. 按 orgType (MAIN 优先), createdAt ASC 排序
 4. 对于每个组织,如果有 parentOrgId,附加父组织的名称
 5. 返回列表
 
@@ -1523,11 +1528,11 @@ json
 2. 查询 organizations 表 (by id = orgId)
 3. 如果不存在 → 返回 404 "org_not_found"
 4. 检查权限:
-    - 如果 userId != org.userId → 返回 403 "access_denied"
+   - 如果 userId != org.userId → 返回 403 "access_denied"
 5. 如果有 parentOrgId,查询父组织信息 (id 和 orgName)
 6. 统计子组织数量:
-    - branchCount: orgType=BRANCH 且 status=ACTIVE
-    - franchiseCount: orgType=FRANCHISE 且 status=ACTIVE
+   - branchCount: orgType=BRANCH 且 status=ACTIVE
+   - franchiseCount: orgType=FRANCHISE 且 status=ACTIVE
 7. 返回详细信息
 
 **成功响应 (200)**:
@@ -1577,16 +1582,16 @@ json
 
 **错误响应**:
 
-`*// 403 - 无权访问*
+`_// 403 - 无权访问_
 {
-  "error": "access_denied",
-  "detail": "You don't have permission to access this organization"
+"error": "access_denied",
+"detail": "You don't have permission to access this organization"
 }
 
-*// 404 - 组织不存在*
+_// 404 - 组织不存在_
 {
-  "error": "org_not_found",
-  "detail": "Organization not found"
+"error": "org_not_found",
+"detail": "Organization not found"
 }`
 
 ---
@@ -1670,14 +1675,14 @@ json
 3. 如果不存在 → 返回 404
 4. 检查权限: userId != org.userId → 返回 403
 5. 检查是否有活跃的子组织:
-    - 查询 organizations (parentOrgId = orgId, status = 'ACTIVE')
-    - 如果存在 → 返回 400 "has_active_children"
+   - 查询 organizations (parentOrgId = orgId, status = 'ACTIVE')
+   - 如果存在 → 返回 400 "has_active_children"
 6. 检查是否有活跃的账号:
-    - 查询 accounts 表 (orgId = orgId, status = 'ACTIVE')
-    - 如果存在 → 返回 400 "has_active_accounts"
+   - 查询 accounts 表 (orgId = orgId, status = 'ACTIVE')
+   - 如果存在 → 返回 400 "has_active_accounts"
 7. 软删除:
-    - status = 'DELETED'
-    - updatedAt = NOW()
+   - status = 'DELETED'
+   - updatedAt = NOW()
 8. 记录到 audit_logs (action='org_deleted')
 9. 返回成功
 
@@ -1690,21 +1695,21 @@ json
 
 **错误响应**:
 
-`*// 400 - 有活跃的子组织*
+`_// 400 - 有活跃的子组织_
 {
-  "error": "has_active_children",
-  "detail": "Cannot delete organization with active branches or franchises. Please delete them first."
+"error": "has_active_children",
+"detail": "Cannot delete organization with active branches or franchises. Please delete them first."
 }
 
-*// 400 - 有活跃的账号*
+_// 400 - 有活跃的账号_
 {
-  "error": "has_active_accounts",
-  "detail": "Cannot delete organization with active accounts. Please delete all accounts first."
+"error": "has_active_accounts",
+"detail": "Cannot delete organization with active accounts. Please delete all accounts first."
 }`
 
 ---
 
-# Auth Service v2.1.2 - 第三部分:Account账号管理模块
+# Auth Service v2.2.0 - 第三部分:Account 账号管理模块
 
 ## 3️⃣ Account 账号管理模块 (/api/auth-service/v1/accounts)
 
@@ -1736,19 +1741,19 @@ json
 **User (老板) 的创建权限:**
 
 - 对于主店/分店 (MAIN/BRANCH): 只能创建 MANAGER
-- 对于加盟店 (FRANCHISE): 只能创建 OWNER,且每个加盟店仅限1个 OWNER
-- 必须是组织的所有者 (org.userId = 当前User)
+- 对于加盟店 (FRANCHISE): 只能创建 OWNER,且每个加盟店仅限 1 个 OWNER
+- 必须是组织的所有者 (org.userId = 当前 User)
 - 可以查看所有自己拥有的组织的账号信息(只读)
 
 **加盟店 OWNER 的创建权限:**
 
 - 只能为自己所在的加盟店创建 MANAGER 和 STAFF
-- (如果所在加盟店订阅了business-service,可以管理自己所在的加盟店未来实现的全部business-service,暂时还没有开发business-service但是scope要写清楚.)
+- (如果所在加盟店订阅了 business-service,可以管理自己所在的加盟店未来实现的全部 business-service,暂时还没有开发 business-service 但是 scope 要写清楚.)
 
 **MANAGER 的创建权限:**
 
 - 只能为自己所在的组织创建 STAFF
-- (如果所在加盟店订阅了business-service,可以管理自己所在的加盟店未来实现的全部business-service,暂时还没有开发business-service但是scope要写清楚.)
+- (如果所在加盟店订阅了 business-service,可以管理自己所在的加盟店未来实现的全部 business-service,暂时还没有开发 business-service 但是 scope 要写清楚.)
 
 **STAFF:**
 
@@ -1761,16 +1766,16 @@ json
 **后台登录 (Owner / Manager):**
 
 - 认证方式: username + password
-- Token类型:
-    - access_token 有效期 60分钟
-    - refresh_token 有效期 30天 (固定,Uber方式)
+- Token 类型:
+  - access_token 有效期 60 分钟
+  - refresh_token 有效期 30 天 (固定,Uber 方式)
 
-**POS登录 (Owner / Manager / Staff):**
+**POS 登录 (Owner / Manager / Staff):**
 
 - 认证方式: employeeNumber + pinCode + 设备绑定
-- Token类型:
-    - access_token 有效期 4.5小时 (16200秒)
-    - 无 refresh_token,到期需重新登录
+- Token 类型:
+  - access_token 有效期 4.5 小时 (16200 秒)
+  - 无 refresh_token,到期需重新登录
 
 ---
 
@@ -1778,8 +1783,8 @@ json
 
 **所有角色都有的字段:**
 
-- employeeNumber: 员工号,组织内唯一,(数据库里存的是string形式,因为有些店老板喜欢用编号代表员工,有些店老板喜欢用名字,甚至是中文名字,所以这个字段需要支持utf-8,允许用名字,也允许用数字)
-- pinCode: 4位数字PIN码,用于POS登录
+- employeeNumber: 员工号,组织内唯一,(数据库里存的是 string 形式,因为有些店老板喜欢用编号代表员工,有些店老板喜欢用名字,甚至是中文名字,所以这个字段需要支持 utf-8,允许用名字,也允许用数字)
+- pinCode: 4 位数字 PIN 码,用于 POS 登录
 
 **仅 OWNER 和 MANAGER 有的字段:**
 
@@ -1794,7 +1799,7 @@ json
 **存储规则:**
 
 - password 和 pinCode 均使用 bcrypt Hash 存储
-- PIN码创建/重置时显示一次明文,之后无法查看,只能重置
+- PIN 码创建/重置时显示一次明文,之后无法查看,只能重置
 
 ---
 
@@ -1802,19 +1807,19 @@ json
 
 **后台登录的 Token:**
 
-- access_token: 60分钟有效期
-- refresh_token: 30天固定不变
+- access_token: 60 分钟有效期
+- refresh_token: 30 天固定不变
 - 刷新机制: Uber 方式,复用 refresh_token,只刷新 access_token
 
-**POS登录的 Token:**
+**POS 登录的 Token:**
 
-- access_token: 4.5小时有效期 (16200秒)
+- access_token: 4.5 小时有效期 (16200 秒)
 - 无 refresh_token
 - 到期后必须重新登录
 
 ---
 
-## 🔐 3.1 Account 后台登录 (Owner/Manager) 
+## 🔐 3.1 Account 后台登录 (Owner/Manager)
 
 **端点:** `POST /api/auth-service/v1/accounts/login`
 
@@ -1827,7 +1832,7 @@ json
 
 **字段说明:**
 
-- username (必填, string): 账号用户名, username中不能含有@符号
+- username (必填, string): 账号用户名, username 中不能含有@符号
 - password (必填, string): 密码
 
 **处理逻辑:**
@@ -1840,7 +1845,7 @@ json
 6. 使用 bcrypt.compare() 验证密码,如果错误 → 返回 401 "invalid_credentials"
 7. 查询关联的 organization,验证 productType 和 status
 8. 更新 accounts.lastLoginAt = NOW()
-9.  记录到 login_attempts 和 audit_logs
+9. 记录到 login_attempts 和 audit_logs
 10. 返回账号和组织信息
 
 **成功响应 (200):**
@@ -1892,7 +1897,7 @@ X-Session-Token: Kx7vZ9mW3Qp5RtY2jN8hU6fL1cV4bS0aO-iPqE3wXyD  // 必须`
 
 **字段说明:**
 
-- pinCode (必填, string): 4位数字 PIN 码
+- pinCode (必填, string): 4 位数字 PIN 码
 - deviceId 从请求头 X-Device-ID 获取
 - sessionToken 从请求头 X-Session-Token 获取
 
@@ -1902,16 +1907,16 @@ X-Session-Token: Kx7vZ9mW3Qp5RtY2jN8hU6fL1cV4bS0aO-iPqE3wXyD  // 必须`
 2. 如果缺少 X-Device-ID 或 X-Session-Token → 返回 400 "missing_device_credentials"
 3. 验证 pinCode 格式
 4. 查询 Device:
-    - 验证 device 存在且 status = 'ACTIVE'
-    - 如果不存在或状态不对 → 返回 403 "device_not_authorized"
+   - 验证 device 存在且 status = 'ACTIVE'
+   - 如果不存在或状态不对 → 返回 403 "device_not_authorized"
 5. 查询 DeviceSession:
-    - 计算 sessionToken 的 SHA-256 哈希值
-    - 查询 device_sessions 表验证 sessionTokenHash 匹配
-    - 如果不匹配或 session 不存在 → 返回 403 "invalid_session"
+   - 计算 sessionToken 的 SHA-256 哈希值
+   - 查询 device_sessions 表验证 sessionTokenHash 匹配
+   - 如果不匹配或 session 不存在 → 返回 403 "invalid_session"
 6. 获取 device.orgId
 7. 在该组织下查询 pinCode 对应的账号
 8. 使用 bcrypt.compare() 验证 pinCode
-9. 验证组织的status
+9. 验证组织的 status
 10. 更新 DeviceSession.lastActiveAt 和 accounts.lastLoginAt
 11. 记录到 login_attempts 和 audit_logs
 12. 返回账号、组织和设备信息
@@ -1941,7 +1946,7 @@ X-Session-Token: Kx7vZ9mW3Qp5RtY2jN8hU6fL1cV4bS0aO-iPqE3wXyD  // 必须`
   }
 }`
 
-**注意:** 登录成功后,前端自动调用 /oauth/token 获取 4.5小时 有效的 access_token (无 refresh_token)
+**注意:** 登录成功后,前端自动调用 /oauth/token 获取 4.5 小时 有效的 access_token (无 refresh_token)
 
 **错误响应:**
 
@@ -1954,12 +1959,14 @@ X-Session-Token: Kx7vZ9mW3Qp5RtY2jN8hU6fL1cV4bS0aO-iPqE3wXyD  // 必须`
 ---
 
 ## 🔑 3.3 获取 OAuth Token (统一端点)
-参考1.5
+
+参考 1.5
 
 ---
 
 ## 🔄 3.4 刷新 Token (后台登录专用)
-参考1.6
+
+参考 1.6
 
 ---
 
@@ -1986,9 +1993,9 @@ POS 登出时:
 **处理逻辑:**
 
 1. 从 Bearer token 中提取 accountId, jti, deviceId(如果有)
-2. 判断登录类型: 如果 payload 有 deviceId → POS登录
+2. 判断登录类型: 如果 payload 有 deviceId → POS 登录
 3. 如果是后台登录: 撤销 refresh_token (status='REVOKED')
-4. 如果是 POS登录: 更新 devices.lastActiveAt
+4. 如果是 POS 登录: 更新 devices.lastActiveAt
 5. 将 access_token 的 jti 加入 Redis 黑名单
 6. 记录到 audit_logs
 
@@ -2033,18 +2040,18 @@ POS 登出时:
 
 **字段说明:**
 
-- orgId (必填, UUID): 所属组织ID
+- orgId (必填, UUID): 所属组织 ID
 - accountType (必填, enum): "OWNER" | "MANAGER" | "STAFF"
-- username (条件必填, string): OWNER/MANAGER必填,全局唯一,4-50字符,不能包含@符号.
-- password (条件必填, string): OWNER/MANAGER必填,至少8位,包含大小写字母和数字
+- username (条件必填, string): OWNER/MANAGER 必填,全局唯一,4-50 字符,不能包含@符号.
+- password (条件必填, string): OWNER/MANAGER 必填,至少 8 位,包含大小写字母和数字
 - employeeNumber (必填, string): 员工号,组织内唯一
-- pinCode (必填, string): 4位数字,创建的时候需要检查org内唯一,不能重复.
+- pinCode (必填, string): 4 位数字,创建的时候需要检查 org 内唯一,不能重复.
 
 **权限规则:**
 
-- User: 主店/分店可以创建MANAGER/STAFF, 加盟店只能创建OWNER(限1个)
-- OWNER: 只能创建MANAGER和STAFF
-- MANAGER: 只能创建STAFF
+- User: 主店/分店可以创建 MANAGER/STAFF, 加盟店只能创建 OWNER(限 1 个)
+- OWNER: 只能创建 MANAGER 和 STAFF
+- MANAGER: 只能创建 STAFF
 - STAFF: 无权限
 
 **成功响应 (201):**
@@ -2087,15 +2094,16 @@ POS 登出时:
 
 **查询参数:**
 
-- orgId (条件必填, UUID): 组织ID
+- orgId (条件必填, UUID): 组织 ID
   - **User token**: 必须提供（因为 User 可能拥有多个组织）
   - **Account token** (OWNER/MANAGER): 可选，不提供时自动使用 token 中的 organizationId
 - accountType (可选, enum): "OWNER" | "MANAGER" | "STAFF"
-- status (可选, enum): "ACTIVE" | "SUSPENDED" | "DELETED", 默认只返回ACTIVE
+- status (可选, enum): "ACTIVE" | "SUSPENDED" | "DELETED", 默认只返回 ACTIVE
 
 **权限规则（按组织类型区分）:**
 
 **User (老板) 的权限：**
+
 - **MAIN/BRANCH 组织**: 可查看所有 MANAGER 和 STAFF（因为都是他直接雇佣的员工）
   - ✅ 可查看：MANAGER, STAFF
   - ❌ 不存在 OWNER（MAIN/BRANCH 不允许有 OWNER）
@@ -2104,47 +2112,58 @@ POS 登出时:
   - ❌ 不可查看：MANAGER, STAFF（这些是 OWNER 的员工，不是 User 的员工）
 
 **OWNER (加盟商老板) 的权限：**
+
 - 可查看同组织的所有 MANAGER 和 STAFF（他的员工）
   - ✅ 可查看：MANAGER, STAFF
   - ❌ 不可查看：其他 OWNER（不存在多个 OWNER）
 
 **MANAGER (经理) 的权限：**
+
 - 可查看同组织的其他 MANAGER 和所有 STAFF（同事和下属）
   - ✅ 可查看：其他 MANAGER, STAFF
   - ❌ 不可查看：OWNER（上级老板）
 
 **STAFF (员工) 的权限：**
+
 - ❌ 无任何查询权限
 
 **场景举例:**
 
-**场景1: User 查询 MAIN 组织（7分甜总部直营店）**
+**场景 1: User 查询 MAIN 组织（7 分甜总部直营店）**
+
 ```http
 GET /api/auth-service/v1/accounts?orgId=main-org-uuid
 Authorization: Bearer <user-token>
 ```
+
 返回: 该店的所有 MANAGER 和 STAFF（User 的员工）
 
-**场景2: User 查询 FRANCHISE 组织（东区加盟店）**
+**场景 2: User 查询 FRANCHISE 组织（东区加盟店）**
+
 ```http
 GET /api/auth-service/v1/accounts?orgId=franchise-org-uuid
 Authorization: Bearer <user-token>
 ```
+
 返回: 只有该加盟店的 OWNER（User 创建的加盟商）
 不返回: 该加盟店的 MANAGER 和 STAFF（这些是 OWNER 的员工）
 
-**场景3: OWNER 查询自己的加盟店**
+**场景 3: OWNER 查询自己的加盟店**
+
 ```http
 GET /api/auth-service/v1/accounts
 Authorization: Bearer <owner-token>
 ```
+
 返回: 该加盟店的所有 MANAGER 和 STAFF（OWNER 的员工）
 
-**场景4: MANAGER 查询同组织员工**
+**场景 4: MANAGER 查询同组织员工**
+
 ```http
 GET /api/auth-service/v1/accounts
 Authorization: Bearer <manager-token>
 ```
+
 返回: 该组织的其他 MANAGER 和所有 STAFF（同事和下属）
 不返回: OWNER（上级老板）
 
@@ -2179,9 +2198,9 @@ Authorization: Bearer <manager-token>
 
 **权限规则:**
 
-- User: 只能查看自己自己的franchise店的OWNER以及自己的main店和branch店的MANAGER和STAFF
+- User: 只能查看自己自己的 franchise 店的 OWNER 以及自己的 main 店和 branch 店的 MANAGER 和 STAFF
 - OWNER: 可查看同组织所有人
-- MANAGER: 只能查看同组织的STAFF
+- MANAGER: 只能查看同组织的 STAFF
 - STAFF: 无权限
 
 **成功响应 (200):**
@@ -2222,7 +2241,7 @@ Authorization: Bearer <manager-token>
 
 **可修改字段:**
 
-- username (可选, string): 仅OWNER/MANAGER
+- username (可选, string): 仅 OWNER/MANAGER
 - status (可选, enum): "ACTIVE" | "SUSPENDED"
 
 **不可修改:**
@@ -2231,9 +2250,9 @@ Authorization: Bearer <manager-token>
 
 **权限规则:**
 
-- User: 除了FRANCHISE的MANAGER和STAFF以外都可以修改。
-- OWNER: 可修改同组织的MANAGER和STAFF(不能修改自己)
-- MANAGER: 只能修改同组织的STAFF(不能修改自己)
+- User: 除了 FRANCHISE 的 MANAGER 和 STAFF 以外都可以修改。
+- OWNER: 可修改同组织的 MANAGER 和 STAFF(不能修改自己)
+- MANAGER: 只能修改同组织的 STAFF(不能修改自己)
 
 **成功响应 (200):**
 
@@ -2260,16 +2279,16 @@ Authorization: Bearer <manager-token>
 
 **删除规则:**
 
-- User删除OWNER: 级联删除该组织所有MANAGER和STAFF
-- OWNER删除MANAGER: 不级联,STAFF保留
-- MANAGER删除STAFF: 直接删除
+- User 删除 OWNER: 级联删除该组织所有 MANAGER 和 STAFF
+- OWNER 删除 MANAGER: 不级联,STAFF 保留
+- MANAGER 删除 STAFF: 直接删除
 - 不能删除自己
 
 **权限规则:**
 
-- User: 可删除自己创建的OWNER和MAIN或者BRANCH的所有MANAGER和STAFF
-- OWNER: 可删除同组织的MANAGER和STAFF
-- MANAGER: 只能删除同组织的STAFF
+- User: 可删除自己创建的 OWNER 和 MAIN 或者 BRANCH 的所有 MANAGER 和 STAFF
+- OWNER: 可删除同组织的 MANAGER 和 STAFF
+- MANAGER: 只能删除同组织的 STAFF
 
 **成功响应 (200):**
 
@@ -2348,15 +2367,18 @@ Authorization: Bearer <manager-token>
 **权限规则 (根据组织类型):**
 
 **USER Token:**
+
 - **MAIN/BRANCH 组织**: 只能为 MANAGER 重置密码 (STAFF 无密码)
 - **FRANCHISE 组织**: 无权为任何人重置密码 (OWNER/MANAGER/STAFF 都属于 OWNER，不属于 USER)
 
 **ACCOUNT Token:**
+
 - **OWNER**: 只能为同组织的 MANAGER 重置密码
 - **MANAGER**: 无权重置任何人的密码
 - **STAFF**: 无权限
 
 **限制:**
+
 - STAFF 无密码，调用返回 400
 - 重置密码后会撤销目标账号的所有 refresh_tokens，强制目标账号重新登录
 
@@ -2386,10 +2408,12 @@ Authorization: Bearer <manager-token>
 **权限规则 (根据组织类型):**
 
 **USER Token:**
+
 - **MAIN/BRANCH 组织**: 可为 MANAGER 和 STAFF 重置 PIN
 - **FRANCHISE 组织**: 只能为 OWNER 重置 PIN (MANAGER/STAFF 属于 OWNER，不属于 USER)
 
 **ACCOUNT Token:**
+
 - **OWNER**: 可为组织内所有人重置 PIN (包括自己、MANAGER、STAFF)
 - **MANAGER**: 只能为 STAFF 和自己重置 PIN
   - 不能为其他 MANAGER 重置 (平级)
@@ -2406,6 +2430,7 @@ Authorization: Bearer <manager-token>
 }`
 
 **注意:**
+
 - newPinCode 仅在此响应中显示一次，请妥善保存
 - PIN 码必须是 4 位数字
 
@@ -2413,7 +2438,7 @@ Authorization: Bearer <manager-token>
 
 ## 🔐 数据库约束
 
-**employeeNumber 唯一性 (组织内,仅ACTIVE):**
+**employeeNumber 唯一性 (组织内,仅 ACTIVE):**
 
 sql
 
@@ -2421,7 +2446,7 @@ sql
 ON accounts (org_id, employee_number) 
 WHERE status = 'ACTIVE';`
 
-**username 唯一性 (全局,仅ACTIVE):**
+**username 唯一性 (全局,仅 ACTIVE):**
 
 sql
 
@@ -2433,7 +2458,7 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 
 ---
 
-# Auth Service v2.1.2 - 第四部分:Device设备管理模块 (最终版)
+# Auth Service v2.2.0 - 第四部分:Device 设备管理模块 (最终版)
 
 ## 4️⃣ Device 设备管理模块 (/api/auth-service/v1/devices)
 
@@ -2503,12 +2528,12 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 3. User 将这一对号码告知现场人员
 4. 现场人员在物理机器上输入 deviceId + activationCode + deviceName
 5. 系统验证配对是否正确
-6. 设备状态变为 ACTIVE，记录激活时间和有效期（1年）
+6. 设备状态变为 ACTIVE，记录激活时间和有效期（1 年）
 
 **更新激活码的场景:**
 
 - User 想为某台设备更换物理机器
-- 需要提供 deviceId + orgId + deviceType + 原activationCode
+- 需要提供 deviceId + orgId + deviceType + 原 activationCode
 - 前提：设备状态必须是 ACTIVE
 - 系统生成新的 activationCode
 - 原机器失效，等待新机器用新码激活
@@ -2519,7 +2544,7 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 
 **有效期规则:**
 
-- 激活时设置 expiresAt = NOW() + 1年
+- 激活时设置 expiresAt = NOW() + 1 年
 - 设备状态完全由用户或管理员手动管理
 
 **活跃时间更新:**
@@ -2597,30 +2622,30 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 
 **字段说明:**
 
-- orgId (必填, UUID): 所属组织ID
+- orgId (必填, UUID): 所属组织 ID
 - deviceType (必填, enum): "POS" | "KIOSK" | "TABLET"
-- deviceName (必填, string):只有user创建设备时可以命名机器.
+- deviceName (必填, string):只有 user 创建设备时可以命名机器.
 
 ---
 
 ### 处理逻辑
 
-1. 从 access_token 中提取 userType, userId,只有user的token可以,account的token不可以.
+1. 从 access_token 中提取 userType, userId,只有 user 的 token 可以,account 的 token 不可以.
 2. 如果 userType != 'USER' → 返回 403 "only_user_can_create_device"
 3. 查询组织，验证 org.userId = 当前 User ID
-4. 验证deviceName在该org中唯一
+4. 验证 deviceName 在该 org 中唯一
 5. 验证 org.status = 'ACTIVE'
-6. 生成唯一的 activationCode（9位大写字母数字）
-7. 生成唯一的deviceId(9位小写字母数字组合)
+6. 生成唯一的 activationCode（9 位大写字母数字）
+7. 生成唯一的 deviceId(9 位小写字母数字组合)
 8. 创建设备记录:
-    - id (UUID) = deviceId
-    - orgId
-    - deviceType
-    - deviceName = “POS-001”
-    - activationCode
-    - status = 'PENDING'
-    - createdAt = NOW()
-    - updatedAt = NOW()
+   - id (UUID) = deviceId
+   - orgId
+   - deviceType
+   - deviceName = “POS-001”
+   - activationCode
+   - status = 'PENDING'
+   - createdAt = NOW()
+   - updatedAt = NOW()
 9. 记录到 audit_logs
 10. 返回 deviceId 和 activationCode
 
@@ -2671,7 +2696,7 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
   "detail": "You don't have permission to create devices for this organization"
 }`
 
-**403 - deviceName重复**
+**403 - deviceName 重复**
 
 `{
   "error": "deviceName_repeated",
@@ -2697,8 +2722,8 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 
 **字段说明:**
 
-- deviceId (必填, UUID): 设备ID
-- activationCode (必填, string): 9位激活码
+- deviceId (必填, UUID): 设备 ID
+- activationCode (必填, string): 9 位激活码
 
 **注意:** 此接口不需要 Authorization，因为设备还未激活。激活接口支持幂等操作，可以使用相同的 deviceId + activationCode 重复激活。
 
@@ -2710,23 +2735,23 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 2. 查询设备:
 
    `SELECT * FROM devices 
-   WHERE id = deviceId 
-     AND activation_code = activationCode`
+WHERE id = deviceId 
+  AND activation_code = activationCode`
 
 3. 如果不存在 → 返回 404 "invalid_device_or_code"
 4. 如果 activationCode 不匹配 → 返回 404 "invalid_device_or_code"
 5. 查询组织，验证 org.status = 'ACTIVE'
 6. 生成 sessionToken:
-    - 使用 crypto.randomBytes(32) 生成 256 位随机数
-    - 转为 base64url 格式 (43 字符)
-    - 计算 SHA-256 哈希值用于数据库存储
+   - 使用 crypto.randomBytes(32) 生成 256 位随机数
+   - 转为 base64url 格式 (43 字符)
+   - 计算 SHA-256 哈希值用于数据库存储
 7. 查询或创建 DeviceSession:
-    - 如果该 deviceId 已有 session → 覆盖旧 sessionTokenHash (幂等激活)
-    - 如果没有 session → 创建新 session
+   - 如果该 deviceId 已有 session → 覆盖旧 sessionTokenHash (幂等激活)
+   - 如果没有 session → 创建新 session
 8. 更新设备状态:
-    - status = 'ACTIVE'
-    - activatedAt = NOW()
-    - updatedAt = NOW()
+   - status = 'ACTIVE'
+   - activatedAt = NOW()
+   - updatedAt = NOW()
 9. 记录到 audit_logs
 10. 返回设备信息和 sessionToken (明文，仅此一次)
 
@@ -2757,7 +2782,7 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 
 ### 错误响应
 
-**404 - 设备ID或激活码无效**
+**404 - 设备 ID 或激活码无效**
 
 `{
   "error": "invalid_device_or_code",
@@ -2799,9 +2824,9 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 
 **字段说明:**
 
-- orgId (必填, UUID): 组织ID
+- orgId (必填, UUID): 组织 ID
 - deviceType (必填, enum): "POS" | "KIOSK" | "TABLET"
-- newDeviceName (选填, string): "如果没填还沿用之前的名字,填了就检查新名字是否重复,不重复可以用,重复就返回报错.例如POS-001"
+- newDeviceName (选填, string): "如果没填还沿用之前的名字,填了就检查新名字是否重复,不重复可以用,重复就返回报错.例如 POS-001"
 - currentActivationCode (必填, string): 当前的激活码
 
 ---
@@ -2813,24 +2838,24 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 3. 查询设备 (by id = deviceId)
 4. 如果不存在 → 返回 404 "device_not_found"
 5. 验证设备信息:
-    - device.orgId = 请求体的 orgId
-    - device.deviceType = 请求体的 deviceType
-    - device.activationCode = 请求体的 currentActivationCode
-    - 如果不匹配 → 返回 400 "device_info_mismatch"
-    - 检查是否填写了新名字,如果没有填写新名字沿用之前的名字
-    - 如果填写了新名字检查新名字是否重复,如果重复 -> 报错.不重复则可用
+   - device.orgId = 请求体的 orgId
+   - device.deviceType = 请求体的 deviceType
+   - device.activationCode = 请求体的 currentActivationCode
+   - 如果不匹配 → 返回 400 "device_info_mismatch"
+   - 检查是否填写了新名字,如果没有填写新名字沿用之前的名字
+   - 如果填写了新名字检查新名字是否重复,如果重复 -> 报错.不重复则可用
 6. 验证设备状态:
-    - 如果 status != 'ACTIVE' → 返回 400 "device_not_active"
+   - 如果 status != 'ACTIVE' → 返回 400 "device_not_active"
 7. 查询组织，验证 org.userId = 当前 User ID
 8. 生成新的 activationCode
-9.  更新设备:
-    - status = 'PENDING'（回到待激活状态）
-    - activationCode = 新激活码
-    - deviceName = "newDeviceName"
-    - activatedAt = NULL
-    - lastActiveAt = NULL
-    - deviceFingerprint = NULL
-    - updatedAt = NOW()
+9. 更新设备:
+   - status = 'PENDING'（回到待激活状态）
+   - activationCode = 新激活码
+   - deviceName = "newDeviceName"
+   - activatedAt = NULL
+   - lastActiveAt = NULL
+   - deviceFingerprint = NULL
+   - updatedAt = NOW()
 10. 记录到 audit_logs
 11. 返回新的 activationCode
 
@@ -2903,10 +2928,10 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 
 **查询参数:**
 
-- orgId (必填, UUID): 组织ID
+- orgId (必填, UUID): 组织 ID
 - deviceType (可选, enum): "POS" | "KIOSK" | "TABLET"
 - status (可选, enum): "PENDING" | "ACTIVE" | "DELETED"
-    - 默认返回 PENDING, ACTIVE（不包括 DELETED）
+  - 默认返回 PENDING, ACTIVE（不包括 DELETED）
 
 ---
 
@@ -2916,16 +2941,16 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 2. 查询组织 (by id = orgId)
 3. 如果不存在 → 返回 404 "org_not_found"
 4. 权限校验:
-    - 如果 userType = 'USER':
-        - 验证 org.userId = 当前 User ID
-    - 如果 userType = 'ACCOUNT':
-        - 查询当前 Account，验证 account.orgId = orgId
-        - 如果 accountType = 'STAFF' → 返回 403 "staff_no_backend_access"
+   - 如果 userType = 'USER':
+     - 验证 org.userId = 当前 User ID
+   - 如果 userType = 'ACCOUNT':
+     - 查询当前 Account，验证 account.orgId = orgId
+     - 如果 accountType = 'STAFF' → 返回 403 "staff_no_backend_access"
 5. 查询设备列表:
-    - 条件: orgId = orgId
-    - 可选过滤: deviceType, status
-    - 默认不返回 DELETED 状态
-    - 排序: status (ACTIVE优先), createdAt DESC
+   - 条件: orgId = orgId
+   - 可选过滤: deviceType, status
+   - 默认不返回 DELETED 状态
+   - 排序: status (ACTIVE 优先), createdAt DESC
 6. 返回列表（不返回 activationCode）
 
 ---
@@ -2988,11 +3013,11 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 3. 如果不存在 → 返回 404 "device_not_found"
 4. 查询关联的组织
 5. 权限校验:
-    - 如果 userType = 'USER':
-        - 验证 org.userId = 当前 User ID
-    - 如果 userType = 'ACCOUNT':
-        - 查询当前 Account，验证 account.orgId = device.orgId
-        - 如果 accountType = 'STAFF' → 返回 403 "staff_no_backend_access"
+   - 如果 userType = 'USER':
+     - 验证 org.userId = 当前 User ID
+   - 如果 userType = 'ACCOUNT':
+     - 查询当前 Account，验证 account.orgId = device.orgId
+     - 如果 accountType = 'STAFF' → 返回 403 "staff_no_backend_access"
 6. 返回详细信息（不返回 activationCode）
 
 ---
@@ -3038,7 +3063,7 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 
 **字段说明:**
 
-- deviceName (可选, string): 设备名称，1-100字符
+- deviceName (可选, string): 设备名称，1-100 字符
 
 **不可修改的字段:**
 
@@ -3056,15 +3081,15 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 3. 如果不存在 → 返回 404 "device_not_found"
 4. 查询关联的组织
 5. 权限校验:
-    - 如果 userType = 'USER':
-        - 验证 org.userId = 当前 User ID
-    - 如果 userType = 'ACCOUNT':
-        - 查询当前 Account，验证 account.orgId = device.orgId
-        - 如果 accountType = 'STAFF' → 返回 403 "staff_no_backend_access"
+   - 如果 userType = 'USER':
+     - 验证 org.userId = 当前 User ID
+   - 如果 userType = 'ACCOUNT':
+     - 查询当前 Account，验证 account.orgId = device.orgId
+     - 如果 accountType = 'STAFF' → 返回 403 "staff_no_backend_access"
 6. 验证 deviceName 不为空
 7. 更新设备:
-    - deviceName
-    - updatedAt = NOW()
+   - deviceName
+   - updatedAt = NOW()
 8. 记录到 audit_logs
 9. 返回更新后的信息
 
@@ -3102,8 +3127,8 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 4. 如果不存在 → 返回 404 "device_not_found"
 5. 查询关联的组织，验证 org.userId = 当前 User ID
 6. 软删除设备:
-    - status = 'DELETED'
-    - updatedAt = NOW()
+   - status = 'DELETED'
+   - updatedAt = NOW()
 7. 记录到 audit_logs
 8. 返回成功
 
@@ -3159,11 +3184,11 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 3. 如果不存在 → 返回 404 "device_not_found"
 4. 查询关联的组织
 5. 权限校验:
-    - 如果 userType = 'USER':
-        - 验证 org.userId = 当前 User ID
-    - 如果 userType = 'ACCOUNT':
-        - 查询当前 Account，验证 account.orgId = device.orgId
-        - 如果 accountType = 'STAFF' → 返回 403 "staff_no_backend_access"
+   - 如果 userType = 'USER':
+     - 验证 org.userId = 当前 User ID
+   - 如果 userType = 'ACCOUNT':
+     - 查询当前 Account，验证 account.orgId = device.orgId
+     - 如果 accountType = 'STAFF' → 返回 403 "staff_no_backend_access"
 6. 查询 DeviceSession (by deviceId)
 7. 返回会话状态信息（不返回 sessionToken）
 
@@ -3223,7 +3248,7 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 
 ---
 
-# Auth Service v2.1.2 - 第五部分:OAuth标准端点
+# Auth Service v2.2.0 - 第五部分:OAuth 标准端点
 
 ## 5️⃣ OAuth 标准端点 (/oauth, /jwks.json, /userinfo)
 
@@ -3296,20 +3321,20 @@ WHERE status = 'ACTIVE' AND username IS NOT NULL;`
 
 **其他微服务验证 JWT:**
 
-`*// business-service 启动时获取公钥*
+`_// business-service 启动时获取公钥_
 const jwks = await fetch('https://auth-service/jwks.json').then(r => r.json());
 const publicKey = convertJWKSToPublicKey(jwks.keys[0]);
 
-*// 验证 JWT*
+_// 验证 JWT_
 function verifyToken(token) {
-  try {
-    const payload = jwt.verify(token, publicKey, {
-      algorithms: ['RS256']
-    });
-    return payload;
-  } catch (error) {
-    throw new Error('Invalid token');
-  }
+try {
+const payload = jwt.verify(token, publicKey, {
+algorithms: ['RS256']
+});
+return payload;
+} catch (error) {
+throw new Error('Invalid token');
+}
 }`
 
 ---
@@ -3337,8 +3362,8 @@ function verifyToken(token) {
 3. 检查 jti 是否在黑名单中
 4. 从 payload 中提取 userType
 5. 根据 userType 查询对应的信息:
-    - 如果 userType = 'USER': 查询 users 表
-    - 如果 userType = 'ACCOUNT': 查询 accounts 表
+   - 如果 userType = 'USER': 查询 users 表
+   - 如果 userType = 'ACCOUNT': 查询 accounts 表
 6. 返回详细信息
 
 ---
@@ -3467,7 +3492,7 @@ json
 
    `EXISTS token:blacklist:{jti}`
 
-1. 返回是否在黑名单中
+5. 返回是否在黑名单中
 
 ---
 
@@ -3512,29 +3537,29 @@ json
 
 **其他微服务调用:**
 
-`*// business-service 验证 token 流程*
+`_// business-service 验证 token 流程_
 async function verifyToken(token) {
-  *// 1. 验证 JWT 签名（用公钥）*
-  const payload = jwt.verify(token, publicKey);
-  
-  *// 2. 检查黑名单（调用 auth-service）*
-  const blacklistResult = await fetch(
-    'https://auth-service/api/auth-service/v1/internal/token/check-blacklist',
-    {
-      method: 'POST',
-      headers: {
-        'X-Internal-Service-Key': process.env.INTERNAL_SERVICE_KEY,
-        'Content-Type': 'application/json'
-      },
-      body: JSON.stringify({ jti: payload.jti })
-    }
-  ).then(r => r.json());
-  
-  if (blacklistResult.blacklisted) {
-    throw new Error('Token revoked');
-  }
-  
-  return payload;
+_// 1. 验证 JWT 签名（用公钥）_
+const payload = jwt.verify(token, publicKey);
+
+_// 2. 检查黑名单（调用 auth-service）_
+const blacklistResult = await fetch(
+'https://auth-service/api/auth-service/v1/internal/token/check-blacklist',
+{
+method: 'POST',
+headers: {
+'X-Internal-Service-Key': process.env.INTERNAL_SERVICE_KEY,
+'Content-Type': 'application/json'
+},
+body: JSON.stringify({ jti: payload.jti })
+}
+).then(r => r.json());
+
+if (blacklistResult.blacklisted) {
+throw new Error('Token revoked');
+}
+
+return payload;
 }`
 
 ---
@@ -3641,22 +3666,22 @@ INTERNAL_SERVICE_KEY=sk_internal_a1b2c3d4e5f6g7h8i9j0`
 
 **其他服务应该:**
 
-`*// 启动时获取公钥*
+`_// 启动时获取公钥_
 let publicKey = null;
 let lastFetch = 0;
 
 async function getPublicKey() {
-  *// 1小时内使用缓存*
-  if (publicKey && Date.now() - lastFetch < 3600000) {
-    return publicKey;
-  }
-  
-  *// 重新获取*
-  const jwks = await fetch('https://auth-service/jwks.json').then(r => r.json());
-  publicKey = convertJWKS(jwks.keys[0]);
-  lastFetch = Date.now();
-  
-  return publicKey;
+_// 1 小时内使用缓存_
+if (publicKey && Date.now() - lastFetch < 3600000) {
+return publicKey;
+}
+
+_// 重新获取_
+const jwks = await fetch('https://auth-service/jwks.json').then(r => r.json());
+publicKey = convertJWKS(jwks.keys[0]);
+lastFetch = Date.now();
+
+return publicKey;
 }`
 
 ### 2. 黑名单缓存
@@ -3666,24 +3691,24 @@ async function getPublicKey() {
 `const blacklistCache = new Map();
 
 async function checkBlacklist(jti) {
-  *// 检查缓存（10秒有效）*
-  const cached = blacklistCache.get(jti);
-  if (cached && cached.expiresAt > Date.now()) {
-    return cached.blacklisted;
-  }
-  
-  *// 调用 auth-service*
-  const result = await authService.checkBlacklist(jti);
-  
-  *// 只缓存 "不在黑名单" 的结果*
-  if (!result.blacklisted) {
-    blacklistCache.set(jti, {
-      blacklisted: false,
-      expiresAt: Date.now() + 10000 *// 10秒*
-    });
-  }
-  
-  return result.blacklisted;
+_// 检查缓存（10 秒有效）_
+const cached = blacklistCache.get(jti);
+if (cached && cached.expiresAt > Date.now()) {
+return cached.blacklisted;
+}
+
+_// 调用 auth-service_
+const result = await authService.checkBlacklist(jti);
+
+_// 只缓存 "不在黑名单" 的结果_
+if (!result.blacklisted) {
+blacklistCache.set(jti, {
+blacklisted: false,
+expiresAt: Date.now() + 10000 _// 10 秒_
+});
+}
+
+return result.blacklisted;
 }`
 
 ---
@@ -3693,31 +3718,31 @@ async function checkBlacklist(jti) {
 **其他微服务的标准验证流程:**
 
 `async function authenticateRequest(req, res, next) {
-  try {
-    *// 1. 提取 token*
-    const token = req.headers.authorization?.replace('Bearer ', '');
-    if (!token) return res.status(401).json({ error: 'no_token' });
-    
+try {
+_// 1. 提取 token_
+const token = req.headers.authorization?.replace('Bearer ', '');
+if (!token) return res.status(401).json({ error: 'no_token' });
+
     *// 2. 验证 JWT 签名（用公钥，本地验证）*
     const publicKey = await getPublicKey();
     const payload = jwt.verify(token, publicKey, { algorithms: ['RS256'] });
-    
+
     *// 3. 检查黑名单（调用 auth-service，有缓存）*
     const blacklisted = await checkBlacklistWithCache(payload.jti);
     if (blacklisted) {
       return res.status(401).json({ error: 'token_revoked' });
     }
-    
+
     *// 4. 验证通过，将 payload 附加到请求*
     req.user = payload;
     next();
-    
-  } catch (error) {
-    return res.status(401).json({ error: 'invalid_token' });
-  }
+
+} catch (error) {
+return res.status(401).json({ error: 'invalid_token' });
+}
 }
 
-*// 使用*
+_// 使用_
 app.use('/api/business-service', authenticateRequest);`
 
 ---
@@ -3727,24 +3752,24 @@ app.use('/api/business-service', authenticateRequest);`
 **完整的请求验证流程:**
 
 `async function handleBusinessRequest(req, res) {
-  *// 1. 验证 token（上面的流程）// req.user 已包含 JWT payload*
-  
-  *// 2. 检查订阅状态（缓存 30 分钟）*
-  const subscription = await getSubscriptionWithCache(
-    req.user.organizationId,
-    30 * 60 * 1000
-  );
-  
-  if (subscription.status !== 'active') {
-    return res.status(403).json({ error: 'subscription_expired' });
-  }
-  
-  *// 3. 执行业务逻辑// ...*
+_// 1. 验证 token（上面的流程）// req.user 已包含 JWT payload_
+
+_// 2. 检查订阅状态（缓存 30 分钟）_
+const subscription = await getSubscriptionWithCache(
+req.user.organizationId,
+30 _ 60 _ 1000
+);
+
+if (subscription.status !== 'active') {
+return res.status(403).json({ error: 'subscription_expired' });
+}
+
+_// 3. 执行业务逻辑// ..._
 }`
 
 ---
 
-# Auth Service v2.1.2 - 第六部分:Admin管理端点
+# Auth Service v2.2.0 - 第六部分:Admin 管理端点
 
 ## 6️⃣ Admin 管理端点 (/api/auth-service/v1/admin)
 
@@ -3801,18 +3826,18 @@ ADMIN_API_KEYS=admin_alice_sk_a1b2c3d4e5f6,admin_bob_sk_x9y8z7w6v5u4`
 ### 验证逻辑
 
 `function requireAdmin(req, res, next) {
-  const apiKey = req.headers['x-admin-key'];
-  
-  if (!adminKeys[apiKey]) {
-    return res.status(403).json({ 
-      error: 'invalid_admin_key',
-      detail: 'Invalid or missing admin API key'
-    });
-  }
-  
-  *// 记录管理员信息*
-  req.admin = adminKeys[apiKey];
-  next();
+const apiKey = req.headers['x-admin-key'];
+
+if (!adminKeys[apiKey]) {
+return res.status(403).json({
+error: 'invalid_admin_key',
+detail: 'Invalid or missing admin API key'
+});
+}
+
+_// 记录管理员信息_
+req.admin = adminKeys[apiKey];
+next();
 }`
 
 ### 错误响应
@@ -4181,15 +4206,15 @@ ADMIN_API_KEYS=admin_alice_sk_a1b2c3d4e5f6,admin_bob_sk_x9y8z7w6v5u4`
 5. 撤销所有 refresh_tokens:
 
    `UPDATE refresh_tokens 
-   SET status = 'REVOKED', 
-       revoked_at = NOW(),
-       revoke_reason = 'admin_force_logout'
-   WHERE subject_user_id = userId 
-     AND status = 'ACTIVE'`
+SET status = 'REVOKED', 
+    revoked_at = NOW(),
+    revoke_reason = 'admin_force_logout'
+WHERE subject_user_id = userId 
+  AND status = 'ACTIVE'`
 
-1. 将所有 refresh_tokens 关联的 access_token jti 加入黑名单
-2. 记录到 audit_logs (actorAdmin = 管理员名称)
-3. 返回成功
+6. 将所有 refresh_tokens 关联的 access_token jti 加入黑名单
+7. 记录到 audit_logs (actorAdmin = 管理员名称)
+8. 返回成功
 
 ---
 
@@ -4275,18 +4300,18 @@ ADMIN_API_KEYS=admin_alice_sk_a1b2c3d4e5f6,admin_bob_sk_x9y8z7w6v5u4`
 2. 查询 User (by userId)
 3. 如果不存在 → 返回 404
 4. 检查账号是否被锁定:
-    - 如果 lockedUntil = NULL → 返回 400 "account_not_locked"
+   - 如果 lockedUntil = NULL → 返回 400 "account_not_locked"
 5. 解锁账号:
 
    `UPDATE users 
-   SET locked_until = NULL,
-       login_failure_count = 0,
-       lock_reason = NULL,
-       updated_at = NOW()
-   WHERE id = userId`
+SET locked_until = NULL,
+    login_failure_count = 0,
+    lock_reason = NULL,
+    updated_at = NOW()
+WHERE id = userId`
 
-1. 记录到 audit_logs
-2. 返回成功
+6. 记录到 audit_logs
+7. 返回成功
 
 ---
 
@@ -4339,10 +4364,10 @@ ADMIN_API_KEYS=admin_alice_sk_a1b2c3d4e5f6,admin_bob_sk_x9y8z7w6v5u4`
 **字段说明:**
 
 - cacheType (必填, enum):
-    - "all": 清除所有缓存
-    - "subscription": 清除订阅状态缓存
-    - "blacklist": 清除黑名单缓存
-    - "publicKey": 清除公钥缓存
+  - "all": 清除所有缓存
+  - "subscription": 清除订阅状态缓存
+  - "blacklist": 清除黑名单缓存
+  - "publicKey": 清除公钥缓存
 - reason (可选, string): 清除原因
 
 ---
@@ -4351,10 +4376,10 @@ ADMIN_API_KEYS=admin_alice_sk_a1b2c3d4e5f6,admin_bob_sk_x9y8z7w6v5u4`
 
 1. 验证 Admin API Key
 2. 根据 cacheType 清除对应的缓存:
-    - subscription: 清除 business-service 的订阅缓存（需要通知）
-    - blacklist: 清除 Redis 中的黑名单缓存（或清除 business-service 的本地缓存）
-    - publicKey: 清除其他服务的公钥缓存（需要通知）
-    - all: 清除所有
+   - subscription: 清除 business-service 的订阅缓存（需要通知）
+   - blacklist: 清除 Redis 中的黑名单缓存（或清除 business-service 的本地缓存）
+   - publicKey: 清除其他服务的公钥缓存（需要通知）
+   - all: 清除所有
 3. 记录到 audit_logs
 4. 返回清除结果
 
@@ -4455,10 +4480,10 @@ ADMIN_API_KEYS=admin_alice_sk_a1b2c3d4e5f6,admin_bob_sk_x9y8z7w6v5u4`
 
 **存储:**
 
-`*# .env 文件*
+`_# .env 文件_
 ADMIN_API_KEYS=admin_alice_sk_abc...,admin_bob_sk_xyz...
 
-*# 不要提交到 Git# 加入 .gitignore*`
+_# 不要提交到 Git# 加入 .gitignore_`
 
 **轮换:**
 
@@ -4491,10 +4516,10 @@ ADMIN_API_KEYS=admin_alice_sk_abc...,admin_bob_sk_xyz...
 `const ADMIN_ALLOWED_IPS = ['192.168.1.100', '10.0.0.5'];
 
 app.use('/api/auth-service/v1/admin', (req, res, next) => {
-  if (!ADMIN_ALLOWED_IPS.includes(req.ip)) {
-    return res.status(403).json({ error: 'ip_not_allowed' });
-  }
-  next();
+if (!ADMIN_ALLOWED_IPS.includes(req.ip)) {
+return res.status(403).json({ error: 'ip_not_allowed' });
+}
+next();
 });`
 
 ### 4. 操作通知（可选）
@@ -4511,29 +4536,29 @@ app.use('/api/auth-service/v1/admin', (req, res, next) => {
 
 ## 📝 使用示例
 
-### 场景1: 查看系统健康状态
+### 场景 1: 查看系统健康状态
 
 `curl -X GET https://api.example.com/api/auth-service/v1/admin/health \
   -H "X-Admin-Key: admin_alice_sk_abc123..."`
 
-### 场景2: 查看系统统计
+### 场景 2: 查看系统统计
 
 `curl -X GET https://api.example.com/api/auth-service/v1/admin/stats \
   -H "X-Admin-Key: admin_alice_sk_abc123..."`
 
-### 场景3: 查询审计日志
+### 场景 3: 查询审计日志
 
 `curl -X GET "https://api.example.com/api/auth-service/v1/admin/audit-logs?action=user_login&startDate=2025-01-01&limit=100" \
   -H "X-Admin-Key: admin_alice_sk_abc123..."`
 
-### 场景4: 强制用户登出
+### 场景 4: 强制用户登出
 
 `curl -X POST https://api.example.com/api/auth-service/v1/admin/users/user-uuid/force-logout \
   -H "X-Admin-Key: admin_alice_sk_abc123..." \
   -H "Content-Type: application/json" \
   -d '{"reason": "Account compromised"}'`
 
-### 场景5: 手动触发设备检查
+### 场景 5: 手动触发设备检查
 
 `curl -X POST https://api.example.com/api/auth-service/v1/admin/devices/check-activity \
   -H "X-Admin-Key: admin_alice_sk_abc123..." \
@@ -4548,7 +4573,7 @@ app.use('/api/auth-service/v1/admin', (req, res, next) => {
 
 **本系统不使用 Family ID 轮换机制:**
 
-- User 和 Account 后台登录都使用 Uber 方式（30天固定 refresh_token）
+- User 和 Account 后台登录都使用 Uber 方式（30 天固定 refresh_token）
 - POS/KIOSK 登录只有 access_token，无 refresh_token
 - `refresh_tokens` 表的 `familyId` 字段应设为 null 或删除
 
@@ -4565,7 +4590,7 @@ app.use('/api/auth-service/v1/admin', (req, res, next) => {
 - 立即撤销所有 refresh_token
 - 将相关 access_token 加入黑名单
 - 用户/账号需要重新登录
-- 其他服务在缓存过期后（最多10秒）会检测到 token 失效
+- 其他服务在缓存过期后（最多 10 秒）会检测到 token 失效
 
 **密钥轮换的影响:**
 
@@ -4620,7 +4645,7 @@ app.use('/api/auth-service/v1/admin', (req, res, next) => {
 **用途:**
 
 - 管理员强制某个 Device 注销
-- 将其status改为DELETE
+- 将其 status 改为 DELETE
 
 **请求头:**
 
@@ -4643,7 +4668,7 @@ app.use('/api/auth-service/v1/admin', (req, res, next) => {
 1. 验证 Admin API Key
 2. 查询 Device (by deviceId)
 3. 如果不存在 → 返回 404
-4. 修改其status: 如果为!DELETE都改为DELETE.如果已经是DELETE,不用修改.
+4. 修改其 status: 如果为!DELETE 都改为 DELETE.如果已经是 DELETE,不用修改.
 5. 记录到 audit_logs (actorAdmin = 管理员名称)
 6. 返回成功
 
@@ -4724,11 +4749,13 @@ app.use('/api/auth-service/v1/admin', (req, res, next) => {
 **密钥轮换机制:**
 
 1. **新密钥生成:**
+
    - 生成新的 2048 位 RSA 密钥对
    - kid 格式: `auth-service-key-{timestamp}-{random}`
    - 状态设为 `ACTIVE`
 
 2. **旧密钥保留:**
+
    - 旧密钥状态从 `ACTIVE` 改为 `GRACE`
    - 保留 1 小时（与 access_token 过期时间一致）
    - 旧 token 在此期间仍然有效
@@ -4765,7 +4792,7 @@ app.use('/api/auth-service/v1/admin', (req, res, next) => {
 
 ---
 
-# Auth Service v2.1.2 - 第七部分:系统端点
+# Auth Service v2.2.0 - 第七部分:系统端点
 
 ## 7️⃣ 系统端点
 
@@ -4888,27 +4915,28 @@ app.use('/api/auth-service/v1/admin', (req, res, next) => {
 `apiVersion: v1
 kind: Pod
 metadata:
-  name: auth-service
+name: auth-service
 spec:
-  containers:
-  - name: auth-service
-    image: auth-service:latest
-    livenessProbe:
-      httpGet:
-        path: /healthz
-        port: 3000
-      initialDelaySeconds: 30
-      periodSeconds: 10
-      timeoutSeconds: 5
-      failureThreshold: 3
-    readinessProbe:
-      httpGet:
-        path: /healthz
-        port: 3000
-      initialDelaySeconds: 5
-      periodSeconds: 5
-      timeoutSeconds: 3
-      failureThreshold: 2`
+containers:
+
+- name: auth-service
+  image: auth-service:latest
+  livenessProbe:
+  httpGet:
+  path: /healthz
+  port: 3000
+  initialDelaySeconds: 30
+  periodSeconds: 10
+  timeoutSeconds: 5
+  failureThreshold: 3
+  readinessProbe:
+  httpGet:
+  path: /healthz
+  port: 3000
+  initialDelaySeconds: 5
+  periodSeconds: 5
+  timeoutSeconds: 3
+  failureThreshold: 2`
 
 ---
 
@@ -4932,13 +4960,14 @@ services:
 **Nginx:**
 
 `upstream auth_service {
-    server auth-service-1:3000 max_fails=3 fail_timeout=30s;
-    server auth-service-2:3000 max_fails=3 fail_timeout=30s;
-    
+server auth-service-1:3000 max_fails=3 fail_timeout=30s;
+server auth-service-2:3000 max_fails=3 fail_timeout=30s;
+
     *# 健康检查*
     check interval=3000 rise=2 fall=3 timeout=1000 type=http;
     check_http_send "GET /healthz HTTP/1.0\r\n\r\n";
     check_http_expect_alive http_2xx;
+
 }`
 
 **AWS ELB/ALB:**
@@ -4975,16 +5004,16 @@ Interval: 30 seconds`
 
 javascript
 
-`*// ✅ 好*
+`_// ✅ 好_
 res.status(200).send('OK');
 
-*// ❌ 不好*
+_// ❌ 不好_
 res.status(200).json({
-  status: 'ok',
-  version: '2.0.0',
-  database: 'PostgreSQL 14.5',
-  redis: 'Redis 7.0.5',
-  uptime: '15 days'
+status: 'ok',
+version: '2.0.0',
+database: 'PostgreSQL 14.5',
+redis: 'Redis 7.0.5',
+uptime: '15 days'
 });`
 
 ---
@@ -4997,19 +5026,19 @@ res.status(200).json({
 
 javascript
 
-`*// 使用 express-rate-limit 中间件*
+`_// 使用 express-rate-limit 中间件_
 const rateLimit = require('express-rate-limit');
 
 const healthzLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000, *// 1 分钟时间窗口*
-  max: 5, *// 每个 IP 最多 5 次请求*
-  standardHeaders: true,
-  legacyHeaders: false,
-  message: 'Too many requests'
+windowMs: 1 _ 60 _ 1000, _// 1 分钟时间窗口_
+max: 5, _// 每个 IP 最多 5 次请求_
+standardHeaders: true,
+legacyHeaders: false,
+message: 'Too many requests'
 });
 
 app.get('/healthz', healthzLimiter, (req, res) => {
-  res.status(200).send('OK');
+res.status(200).send('OK');
 });`
 
 **说明:**
@@ -5027,9 +5056,9 @@ app.get('/healthz', healthzLimiter, (req, res) => {
 javascript
 
 `app.get('/healthz', (req, res) => {
-  *// ❌ 不要这样做// logger.info('Health check request received');*
-  
-  res.status(200).send('OK');
+_// ❌ 不要这样做// logger.info('Health check request received');_
+
+res.status(200).send('OK');
 });`
 
 **原因:**
@@ -5086,15 +5115,16 @@ javascript
 **如果需要区分，可以添加 /readyz:**
 
 `app.get('/readyz', async (req, res) => {
-  try {
-    *// 检查数据库、Redis 等*
-    await db.raw('SELECT 1');
-    await redis.ping();
-    
+try {
+_// 检查数据库、Redis 等_
+await db.raw('SELECT 1');
+await redis.ping();
+
     res.status(200).send('READY');
-  } catch (error) {
-    res.status(503).send('NOT READY');
-  }
+
+} catch (error) {
+res.status(503).send('NOT READY');
+}
 });`
 
 ---

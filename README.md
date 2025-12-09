@@ -1,4 +1,4 @@
-# Auth Service v2.1.2
+# Auth Service v2.2.0
 
 > **Enterprise-grade Identity Authentication & Authorization Service** - Multi-tenant Identity Management Center based on OAuth2/OpenID Connect
 
@@ -21,7 +21,7 @@ Auth Service is an enterprise-grade identity authentication and authorization se
 
 ### Version Information
 
-- **Current Version**: v2.1.2
+- **Current Version**: v2.2.0
 - **Service Address**: https://tymoe.com
 - **API Base Path**: `/api/auth-service/v1`
 - **Protocol Standards**: OAuth 2.0 + OpenID Connect 1.0
@@ -65,6 +65,7 @@ Auth Service is an enterprise-grade identity authentication and authorization se
 ## 🚀 Core Features
 
 ### 1. User Identity Management (Identity API)
+
 - ✅ User registration and email verification
 - ✅ User login (supports CAPTCHA, account lockout protection)
 - ✅ Password reset
@@ -72,6 +73,7 @@ Auth Service is an enterprise-grade identity authentication and authorization se
 - ✅ User profile query and update
 
 ### 2. Multi-tenant Organization Management (Organizations API)
+
 - ✅ Organization CRUD (supports MAIN, BRANCH, FRANCHISE types)
 - ✅ Account management (OWNER, MANAGER, STAFF roles)
 - ✅ Device management (POS, KIOSK, TABLET types)
@@ -79,6 +81,7 @@ Auth Service is an enterprise-grade identity authentication and authorization se
 - ✅ Organization tree structure management
 
 ### 3. OAuth2/OIDC Standard Protocol
+
 - ✅ Authorization Code Flow (PKCE)
 - ✅ Client Credentials Flow
 - ✅ Token issuance and verification
@@ -88,12 +91,14 @@ Auth Service is an enterprise-grade identity authentication and authorization se
 - ✅ UserInfo endpoint
 
 ### 4. Device Authentication (Device Authentication)
+
 - ✅ Device registration and activation
 - ✅ Device key management
 - ✅ Device token issuance
 - ✅ Device status management
 
 ### 5. Admin API (Admin API)
+
 - ✅ System health check
 - ✅ System statistics and configuration query
 - ✅ Audit log query
@@ -104,6 +109,7 @@ Auth Service is an enterprise-grade identity authentication and authorization se
 - ✅ **JWT key rotation** (new in 6.11)
 
 ### 6. Security Protection
+
 - ✅ Redis rate limiting (login, registration, password reset)
 - ✅ Login failure lockout mechanism
 - ✅ Google reCAPTCHA v2 support
@@ -192,94 +198,94 @@ For complete API documentation, see [API Endpoint Design Document.md](./API端�
 
 ### Part 1: User Identity Management (Identity API) - 14 Endpoints
 
-| Endpoint | Method | Path | Description |
-|----------|--------|------|-------------|
-| 1.1 | POST | `/identity/register` | User registration |
-| 1.2 | POST | `/identity/verification` | Email verification |
-| 1.3 | POST | `/identity/resend` | Resend verification code |
-| 1.4 | POST | `/identity/login` | User login |
-| 1.5 | POST | `/oauth/token` | Get OAuth Token |
-| 1.6 | POST | `/oauth/token` | Refresh Token |
-| 1.7 | POST | `/identity/logout` | User logout |
-| 1.8 | POST | `/identity/forgot-password` | Forgot password |
-| 1.9 | POST | `/identity/reset-password` | Reset password |
-| 1.10 | POST | `/identity/change-password` | Change password (logged in) |
-| 1.11 | GET | `/identity/profile` | Get current user info |
-| 1.12 | PATCH | `/identity/profile` | Update user info |
-| 1.13 | POST | `/identity/change-email` | Change email (Step 1: request verification code) |
-| 1.14 | POST | `/identity/verification-email-change` | Change email (Step 2: confirm verification code) |
+| Endpoint | Method | Path                                  | Description                                      |
+| -------- | ------ | ------------------------------------- | ------------------------------------------------ |
+| 1.1      | POST   | `/identity/register`                  | User registration                                |
+| 1.2      | POST   | `/identity/verification`              | Email verification                               |
+| 1.3      | POST   | `/identity/resend`                    | Resend verification code                         |
+| 1.4      | POST   | `/identity/login`                     | User login                                       |
+| 1.5      | POST   | `/oauth/token`                        | Get OAuth Token                                  |
+| 1.6      | POST   | `/oauth/token`                        | Refresh Token                                    |
+| 1.7      | POST   | `/identity/logout`                    | User logout                                      |
+| 1.8      | POST   | `/identity/forgot-password`           | Forgot password                                  |
+| 1.9      | POST   | `/identity/reset-password`            | Reset password                                   |
+| 1.10     | POST   | `/identity/change-password`           | Change password (logged in)                      |
+| 1.11     | GET    | `/identity/profile`                   | Get current user info                            |
+| 1.12     | PATCH  | `/identity/profile`                   | Update user info                                 |
+| 1.13     | POST   | `/identity/change-email`              | Change email (Step 1: request verification code) |
+| 1.14     | POST   | `/identity/verification-email-change` | Change email (Step 2: confirm verification code) |
 
 ### Part 2: Organization Management (Organizations API) - 5 Endpoints
 
-| Endpoint | Method | Path | Description |
-|----------|--------|------|-------------|
-| 2.1 | POST | `/organizations` | Create organization |
-| 2.2 | GET | `/organizations` | Get all user organizations |
-| 2.3 | GET | `/organizations/:id` | Get organization details |
-| 2.4 | PUT | `/organizations/:orgId` | Update organization info |
-| 2.5 | DELETE | `/organizations/:id` | Delete organization (soft delete) |
+| Endpoint | Method | Path                    | Description                       |
+| -------- | ------ | ----------------------- | --------------------------------- |
+| 2.1      | POST   | `/organizations`        | Create organization               |
+| 2.2      | GET    | `/organizations`        | Get all user organizations        |
+| 2.3      | GET    | `/organizations/:id`    | Get organization details          |
+| 2.4      | PUT    | `/organizations/:orgId` | Update organization info          |
+| 2.5      | DELETE | `/organizations/:id`    | Delete organization (soft delete) |
 
 ### Part 3: Account Management (Account API) - 13 Endpoints
 
-| Endpoint | Method | Path | Description |
-|----------|--------|------|-------------|
-| 3.1 | POST | `/accounts/login` | Account backend login (Owner/Manager) |
-| 3.2 | POST | `/accounts/pos-login` | Account POS login (Owner/Manager/STAFF) |
-| 3.3 | POST | `/oauth/token` | Get OAuth Token (unified endpoint) * |
-| 3.4 | POST | `/oauth/token` | Refresh Token (backend login) * |
-| 3.5 | POST | `/accounts/logout` | Account logout |
-| 3.6 | POST | `/accounts` | Create Account |
-| 3.7 | GET | `/accounts` | Get all organization accounts |
-| 3.8 | GET | `/accounts/:accountId` | Get account details |
-| 3.9 | PATCH | `/accounts/:accountId` | Update account info |
-| 3.10 | DELETE | `/accounts/:accountId` | Delete account (soft delete) |
-| 3.11 | POST | `/accounts/change-password` | Change own password |
-| 3.12 | POST | `/accounts/:accountId/reset-password` | Reset account password (admin) |
-| 3.13 | POST | `/accounts/:accountId/reset-pin` | Reset account PIN code |
+| Endpoint | Method | Path                                  | Description                             |
+| -------- | ------ | ------------------------------------- | --------------------------------------- |
+| 3.1      | POST   | `/accounts/login`                     | Account backend login (Owner/Manager)   |
+| 3.2      | POST   | `/accounts/pos-login`                 | Account POS login (Owner/Manager/STAFF) |
+| 3.3      | POST   | `/oauth/token`                        | Get OAuth Token (unified endpoint) \*   |
+| 3.4      | POST   | `/oauth/token`                        | Refresh Token (backend login) \*        |
+| 3.5      | POST   | `/accounts/logout`                    | Account logout                          |
+| 3.6      | POST   | `/accounts`                           | Create Account                          |
+| 3.7      | GET    | `/accounts`                           | Get all organization accounts           |
+| 3.8      | GET    | `/accounts/:accountId`                | Get account details                     |
+| 3.9      | PATCH  | `/accounts/:accountId`                | Update account info                     |
+| 3.10     | DELETE | `/accounts/:accountId`                | Delete account (soft delete)            |
+| 3.11     | POST   | `/accounts/change-password`           | Change own password                     |
+| 3.12     | POST   | `/accounts/:accountId/reset-password` | Reset account password (admin)          |
+| 3.13     | POST   | `/accounts/:accountId/reset-pin`      | Reset account PIN code                  |
 
 > **Note**: 3.3 and 3.4 are the same endpoints as 1.5 and 1.6 in Part 1
 
 ### Part 4: Device Management (Device API) - 7 Endpoints
 
-| Endpoint | Method | Path | Description |
-|----------|--------|------|-------------|
-| 4.1 | POST | `/devices` | Create device (generate activation code) |
-| 4.2 | POST | `/devices/activate` | Activate device |
-| 4.3 | POST | `/devices/:deviceId/update-activation-code` | Update device activation code |
-| 4.4 | GET | `/devices` | Get all organization devices |
-| 4.5 | GET | `/devices/:deviceId` | Get device details |
-| 4.6 | PATCH | `/devices/:deviceId` | Update device info |
-| 4.7 | DELETE | `/devices/:deviceId` | Delete device (soft delete) |
+| Endpoint | Method | Path                                        | Description                              |
+| -------- | ------ | ------------------------------------------- | ---------------------------------------- |
+| 4.1      | POST   | `/devices`                                  | Create device (generate activation code) |
+| 4.2      | POST   | `/devices/activate`                         | Activate device                          |
+| 4.3      | POST   | `/devices/:deviceId/update-activation-code` | Update device activation code            |
+| 4.4      | GET    | `/devices`                                  | Get all organization devices             |
+| 4.5      | GET    | `/devices/:deviceId`                        | Get device details                       |
+| 4.6      | PATCH  | `/devices/:deviceId`                        | Update device info                       |
+| 4.7      | DELETE | `/devices/:deviceId`                        | Delete device (soft delete)              |
 
 ### Part 5: OAuth/OIDC Standard Endpoints - 3 Endpoints
 
-| Endpoint | Method | Path | Description |
-|----------|--------|------|-------------|
-| 5.1 | GET | `/jwks.json` | Get JWT public key (JWKS) |
-| 5.2 | GET | `/userinfo` | Get user info |
-| 5.3 | POST | `/internal/token/check-blacklist` | Check token blacklist (internal service) |
+| Endpoint | Method | Path                              | Description                              |
+| -------- | ------ | --------------------------------- | ---------------------------------------- |
+| 5.1      | GET    | `/jwks.json`                      | Get JWT public key (JWKS)                |
+| 5.2      | GET    | `/userinfo`                       | Get user info                            |
+| 5.3      | POST   | `/internal/token/check-blacklist` | Check token blacklist (internal service) |
 
 ### Part 6: Admin API (Admin API) - 11 Endpoints
 
-| Endpoint | Method | Path | Description | Auth |
-|----------|--------|------|-------------|------|
-| 6.1 | GET | `/admin/health` | System health check | X-Admin-Key |
-| 6.2 | GET | `/admin/stats` | System statistics | X-Admin-Key |
-| 6.3 | GET | `/admin/config` | System config info | X-Admin-Key |
-| 6.4 | GET | `/admin/audit-logs` | Query audit logs | X-Admin-Key |
-| 6.5 | POST | `/admin/users/:userId/force-logout` | Force logout User | X-Admin-Key |
-| 6.6 | POST | `/admin/accounts/:accountId/force-logout` | Force logout Account | X-Admin-Key |
-| 6.7 | POST | `/admin/users/:userId/unlock` | Unlock user account | X-Admin-Key |
-| 6.8 | POST | `/admin/cache/clear` | Clear cache | X-Admin-Key |
-| 6.9 | GET | `/admin/tokens/active` | View active tokens | X-Admin-Key |
-| 6.10 | POST | `/admin/devices/:deviceId/force-logout` | Force logout Device | X-Admin-Key |
-| 6.11 | POST | `/admin/keys/rotate` | Rotate JWT signing keys | X-Admin-Key |
+| Endpoint | Method | Path                                      | Description             | Auth        |
+| -------- | ------ | ----------------------------------------- | ----------------------- | ----------- |
+| 6.1      | GET    | `/admin/health`                           | System health check     | X-Admin-Key |
+| 6.2      | GET    | `/admin/stats`                            | System statistics       | X-Admin-Key |
+| 6.3      | GET    | `/admin/config`                           | System config info      | X-Admin-Key |
+| 6.4      | GET    | `/admin/audit-logs`                       | Query audit logs        | X-Admin-Key |
+| 6.5      | POST   | `/admin/users/:userId/force-logout`       | Force logout User       | X-Admin-Key |
+| 6.6      | POST   | `/admin/accounts/:accountId/force-logout` | Force logout Account    | X-Admin-Key |
+| 6.7      | POST   | `/admin/users/:userId/unlock`             | Unlock user account     | X-Admin-Key |
+| 6.8      | POST   | `/admin/cache/clear`                      | Clear cache             | X-Admin-Key |
+| 6.9      | GET    | `/admin/tokens/active`                    | View active tokens      | X-Admin-Key |
+| 6.10     | POST   | `/admin/devices/:deviceId/force-logout`   | Force logout Device     | X-Admin-Key |
+| 6.11     | POST   | `/admin/keys/rotate`                      | Rotate JWT signing keys | X-Admin-Key |
 
 ### Part 7: System Endpoints - 1 Endpoint
 
-| Endpoint | Method | Path | Description |
-|----------|--------|------|-------------|
-| 7.1 | GET | `/healthz` | System health check |
+| Endpoint | Method | Path       | Description         |
+| -------- | ------ | ---------- | ------------------- |
+| 7.1      | GET    | `/healthz` | System health check |
 
 **Total**: 54 API endpoints (52 unique endpoints)
 
@@ -514,6 +520,7 @@ enum KeyStatus {
 ```
 
 **Access Token Claims**:
+
 ```json
 {
   "sub": "user:uuid",
@@ -543,6 +550,7 @@ enum KeyStatus {
 ```
 
 **Access Token Claims**:
+
 ```json
 {
   "sub": "account:cuid",
@@ -570,6 +578,7 @@ enum KeyStatus {
 ```
 
 **Device Token Claims**:
+
 ```json
 {
   "sub": "device:cuid",
@@ -577,7 +586,7 @@ enum KeyStatus {
   "organizationId": "org-uuid",
   "productType": "beauty",
   "type": "device",
-  "exp": 1234564590  // Expires in 5 minutes
+  "exp": 1234564590 // Expires in 5 minutes
 }
 ```
 
@@ -594,6 +603,7 @@ curl -X GET http://localhost:8080/api/auth-service/v1/admin/health \
 **Admin Key Format**: `admin_{name}_sk_{random}`
 
 Configured in `.env`:
+
 ```
 ADMIN_API_KEYS=admin_ryan_sk_Z678YTHUJ,admin_meng_sk_O0S8HBLAY
 ```
@@ -750,6 +760,7 @@ curl -X POST http://localhost:8080/api/auth-service/v1/admin/keys/rotate \
 ```
 
 **Response Example**:
+
 ```json
 {
   "success": true,
@@ -766,6 +777,7 @@ curl -X POST http://localhost:8080/api/auth-service/v1/admin/keys/rotate \
 ```
 
 **Key Lifecycle**:
+
 - **ACTIVE**: Currently active key used for issuing new tokens
 - **GRACE**: Grace period (1 hour), old keys can still verify tokens
 - **RETIRED**: Retired, no longer used
@@ -794,7 +806,7 @@ docker logs -f auth-service
 ### Docker Compose Deployment
 
 ```yaml
-version: '3.8'
+version: "3.8"
 
 services:
   auth-service:
@@ -829,6 +841,7 @@ volumes:
 ```
 
 Start:
+
 ```bash
 docker-compose up -d
 ```
@@ -907,14 +920,14 @@ auth-service-deploy/
 
 ```typescript
 // src/controllers/myFeature.ts
-import { Request, Response } from 'express';
+import { Request, Response } from "express";
 
 export async function myEndpoint(req: Request, res: Response) {
   try {
     // Business logic
     return res.json({ success: true });
   } catch (err) {
-    return res.status(500).json({ error: 'internal_error' });
+    return res.status(500).json({ error: "internal_error" });
   }
 }
 ```
@@ -923,20 +936,20 @@ export async function myEndpoint(req: Request, res: Response) {
 
 ```typescript
 // src/routes/myFeature.ts
-import { Router } from 'express';
-import { myEndpoint } from '../controllers/myFeature.js';
-import { authenticate } from '../middleware/authenticate.js';
+import { Router } from "express";
+import { myEndpoint } from "../controllers/myFeature.js";
+import { authenticate } from "../middleware/authenticate.js";
 
 const router = Router();
-router.get('/my-endpoint', authenticate, myEndpoint);
+router.get("/my-endpoint", authenticate, myEndpoint);
 export default router;
 ```
 
 3. **Register route in `src/index.ts`**:
 
 ```typescript
-import myFeatureRoutes from './routes/myFeature.js';
-app.use('/api/auth-service/v1/my-feature', myFeatureRoutes);
+import myFeatureRoutes from "./routes/myFeature.js";
+app.use("/api/auth-service/v1/my-feature", myFeatureRoutes);
 ```
 
 ### Database Migration
@@ -990,6 +1003,7 @@ redis-cli ping
 **Issue**: `{ "error": "invalid_token" }`
 
 **Solution**:
+
 - Check if token is expired
 - Verify `ISSUER_URL` is correct
 - Ensure other services use latest public keys from `/jwks.json`
@@ -1017,6 +1031,7 @@ npm run test:smtp
 **Issue**: `Error: Redis connection timeout`
 
 **Solution**:
+
 - Verify `REDIS_URL` is correct
 - Check if Redis is running
 - Adjust `REDIS_CONNECT_TIMEOUT` and `REDIS_COMMAND_TIMEOUT`
@@ -1031,6 +1046,7 @@ redis-cli -u $REDIS_URL ping
 **Issue**: `{ "error": "rate_limit_exceeded" }`
 
 **Solution**:
+
 - Check rate limiting keys in Redis
 - Adjust rate limiting config in `.env`
 - Or use Admin API to clear cache
@@ -1095,15 +1111,17 @@ curl http://localhost:8080/metrics \
 
 ## 📝 Changelog
 
-### v2.1.2 (2025-10-12)
+### v2.2.0 (2025-10-12)
 
 **Breaking Changes**:
+
 - ✅ **Removed X-Product-Type header validation** - Frontend no longer needs to send X-Product-Type header
 - ✅ **Extended ProductType enum** - Expanded from 2 values to 15 detailed types
 - ✅ **Removed productType from Account table** - Now retrieved from associated Organization
 - ✅ **Optimized organization query logic** - No longer filters by productType, returns all organizations
 
 **New ProductType values**:
+
 - `beauty_salon`, `hair_salon`, `spa`
 - `restaurant`, `fast_food`, `cafe`, `beverage`
 - `home_studio`, `fitness`, `yoga_studio`
@@ -1111,33 +1129,39 @@ curl http://localhost:8080/metrics \
 - `liquor_store`, `other`
 
 **Database Changes**:
+
 - ✅ Removed `productType` field from Account table
 - ✅ Extended ProductType enum to 15 values
 - ✅ Database migration applied successfully
 
 **API Changes**:
+
 - ✅ **POST /organizations** - `productType` now passed in request body (not header)
 - ✅ **GET /organizations** - Returns all organizations, no productType filtering
 - ✅ **POST /identity/login** - Returns all user organizations, no productType filtering
 - ✅ **All Account endpoints** - Get productType from `account.organization.productType`
 
 **Code Improvements**:
+
 - ✅ Removed `src/middleware/productType.ts` middleware
 - ✅ Fixed hardcoded enum values in `src/controllers/admin.ts`
 - ✅ Updated type definitions in `src/services/organization.ts`
 - ✅ Optimized stats queries for dynamic productType
 
 **Test Validation**:
+
 - ✅ TypeScript compilation passed
 - ✅ Service started successfully, all dependencies working
 - ✅ Health check endpoint `/healthz` responding normally
 
 **Impact**:
+
 - ⚠️ **Breaking change**: Frontend must remove all X-Product-Type headers
 - ⚠️ **API behavior change**: Login and organization queries now return all organizations
 - ⚠️ **Database change**: Migration required to update ProductType enum
 
 **Migration Guide**:
+
 1. Remove all `X-Product-Type` headers from frontend
 2. Pass `productType` in request body when creating organizations
 3. Update Account logic to get productType from `account.organization.productType`
@@ -1148,22 +1172,26 @@ curl http://localhost:8080/metrics \
 ### v2.1.1 (2025-10-10)
 
 **New Features**:
+
 - ✅ Added **6.11 JWT Key Rotation API** (`POST /admin/keys/rotate`)
 - ✅ Support for API-based key rotation without CLI scripts
 - ✅ Removed old `scripts/rotate-key.ts` and `scripts/retire-keys.ts`
 
 **Improvements**:
+
 - ✅ Enhanced audit logging for Admin API
 - ✅ Improved key lifecycle management (ACTIVE -> GRACE -> RETIRED)
 - ✅ Enhanced system configuration query endpoint (6.3)
 
 **Bug Fixes**:
+
 - ✅ Fixed device force logout status update logic
 - ✅ Fixed cache clearing error handling
 
 ### v2.1.0
 
 **New Features**:
+
 - ✅ Account Management API (Account Login)
 - ✅ Device Management API (Device Management)
 - ✅ Organization tree structure support
@@ -1172,6 +1200,7 @@ curl http://localhost:8080/metrics \
 ### v2.0.0
 
 **Major Update**:
+
 - ✅ Full OAuth2/OIDC support
 - ✅ Multi-organization architecture (MAIN/BRANCH/FRANCHISE)
 - ✅ Admin API
