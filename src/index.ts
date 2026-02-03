@@ -11,6 +11,7 @@ import adminRoutes from './routes/admin.js';
 import organizationRoutes from './routes/organizations.js';
 import accountRoutes from './routes/accounts.js';
 import deviceRoutes from './routes/devices.js';
+import gatewayRoutes from './routes/gateway.js';
 import { prisma } from './infra/prisma.js';
 import { sessionMiddleware } from './infra/session.js';
 import { registry } from './infra/metrics.js';
@@ -119,6 +120,8 @@ app.get('/', (_req, res) => {
       organizations: `${API_PREFIX}/organizations`,
       accounts: `${API_PREFIX}/accounts`,
       devices: `${API_PREFIX}/devices`,
+      // Gateway端点
+      gatewayCheck: `${API_PREFIX}/auth/gateway-check`,
       // 内部服务端点
       tokenBlacklist: `${API_PREFIX}/internal/token/check-blacklist`,
       // 系统端点
@@ -138,6 +141,7 @@ app.use(`${API_PREFIX}/admin`, adminRoutes);
 app.use(`${API_PREFIX}/organizations`, organizationRoutes);
 app.use(`${API_PREFIX}/accounts`, accountRoutes);
 app.use(`${API_PREFIX}/devices`, deviceRoutes);
+app.use(`${API_PREFIX}/auth`, gatewayRoutes);
 
 // 错误处理中间件 - 生产环境脱敏
 app.use((err: any, req: any, res: any, _next: any) => {
