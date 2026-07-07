@@ -80,3 +80,6 @@ database.db
 .claude/
 *.backup
 *.bak
+
+# 本地文档目录（不提交）
+doc/

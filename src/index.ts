@@ -11,6 +11,10 @@ import adminRoutes from './routes/admin.js';
 import organizationRoutes from './routes/organizations.js';
 import accountRoutes from './routes/accounts.js';
 import deviceRoutes from './routes/devices.js';
+import consumerRoutes from './routes/consumer.js';
+import internalRoutes from './routes/internal.js';
+import remoteAuthRoutes from './routes/remoteAuth.js';
+import gatewayRoutes from './routes/gateway.js';
 import { prisma } from './infra/prisma.js';
 import { sessionMiddleware } from './infra/session.js';
 import { registry } from './infra/metrics.js';
@@ -34,15 +38,24 @@ if (process.env.NODE_ENV === 'production') {
 
 // CORS白名单配置
 const allowedOrigins = env.allowedOrigins.split(',').filter(Boolean);
+const isDev = process.env.NODE_ENV !== 'production';
 const corsOptions = {
   origin: (origin: string | undefined, callback: (err: Error | null, allow?: boolean) => void) => {
     // Allow requests with no origin (like mobile apps or curl requests)
     if (!origin) return callback(null, true);
-    if (allowedOrigins.includes(origin)) {
-      callback(null, true);
-    } else {
-      callback(new Error('Not allowed by CORS'));
+    if (allowedOrigins.includes(origin)) return callback(null, true);
+    // 开发环境放行所有局域网 IP origin（任意端口），避免切 WiFi 后频繁改 .env
+    if (isDev) {
+      try {
+        const url = new URL(origin);
+        if (/^192\.168\.\d{1,3}\.\d{1,3}$/.test(url.hostname)
+            || /^10\.\d{1,3}\.\d{1,3}\.\d{1,3}$/.test(url.hostname)
+            || /^172\.(1[6-9]|2\d|3[01])\.\d{1,3}\.\d{1,3}$/.test(url.hostname)) {
+          return callback(null, true);
+        }
+      } catch {}
     }
+    callback(new Error('Not allowed by CORS'));
   },
   credentials: true,
   methods: ['GET', 'POST', 'PATCH', 'OPTIONS'],
@@ -86,11 +99,25 @@ app.use(pinoHttp({
 }));
 app.use(express.json({ limit: '1mb' }));
 app.use(express.urlencoded({ extended: false })); // 解析 login 表单
-app.use(cors(corsOptions));
+
+// 审批页允许任意来源（manager 从任意设备/网络访问），其他路径走白名单
+app.use((req, res, next) => {
+  if (req.path.startsWith('/api/auth-service/v1/remote-auth/approve')) {
+    return cors({ origin: '*', methods: ['GET', 'POST', 'OPTIONS'] })(req, res, next);
+  }
+  return cors(corsOptions)(req, res, next);
+});
 app.use(sessionMiddleware);
 
 // Health check endpoint (不需要API前缀，用于负载均衡器)
-app.get('/healthz', (_req, res) => res.json({ ok: true }));
+app.get('/healthz', async (_req, res) => {
+  try {
+    await prisma.$queryRaw`SELECT 1`;
+    res.json({ ok: true });
+  } catch {
+    res.status(503).json({ ok: false });
+  }
+});
 
 // Prometheus metrics端点 (不需要API前缀，用于监控系统)
 app.get('/metrics', metricsAuth, async (_req, res) => {
@@ -119,6 +146,7 @@ app.get('/', (_req, res) => {
       organizations: `${API_PREFIX}/organizations`,
       accounts: `${API_PREFIX}/accounts`,
       devices: `${API_PREFIX}/devices`,
+      consumer: `${API_PREFIX}/consumer`,
       // 内部服务端点
       tokenBlacklist: `${API_PREFIX}/internal/token/check-blacklist`,
       // 系统端点
@@ -138,6 +166,10 @@ app.use(`${API_PREFIX}/admin`, adminRoutes);
 app.use(`${API_PREFIX}/organizations`, organizationRoutes);
 app.use(`${API_PREFIX}/accounts`, accountRoutes);
 app.use(`${API_PREFIX}/devices`, deviceRoutes);
+app.use(`${API_PREFIX}/consumer`, consumerRoutes);
+app.use(`${API_PREFIX}/internal`, internalRoutes);
+app.use(`${API_PREFIX}/remote-auth`, remoteAuthRoutes);
+app.use(`${API_PREFIX}/auth`, gatewayRoutes);
 
 // 错误处理中间件 - 生产环境脱敏
 app.use((err: any, req: any, res: any, _next: any) => {
