@@ -6,7 +6,30 @@ import { audit } from '../middleware/audit.js';
 import { signAccessToken, issueRefreshFamily } from '../services/token.js';
 import { jtiCache, isRedisConnected } from '../infra/redis.js';
 import bcrypt from 'bcryptjs';
+import crypto from 'crypto';
 import { env } from '../config/env.js';
+import { resolveAccountPermissions } from '../services/permissionSet.js';
+import { getMailer } from '../services/mailer.js';
+import { Templates } from '../services/templates.js';
+
+// 生成一个 12 位随机密码（大小写字母+数字+符号各至少一个，其余位随机），
+// 用于重置密码时后端自己生成新密码，不再要求调用方传入明文
+function generateRandomPassword(length = 12): string {
+  const upper = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
+  const lower = 'abcdefghijkmnpqrstuvwxyz';
+  const digits = '23456789';
+  const symbols = '!@#$%^&*';
+  const all = upper + lower + digits + symbols;
+  const pick = (charset: string) => charset[crypto.randomInt(0, charset.length)];
+  const chars = [pick(upper), pick(lower), pick(digits), pick(symbols)];
+  while (chars.length < length) chars.push(pick(all));
+  // Fisher-Yates 打乱，避免固定位置总是"大写字母开头"这种可预测模式
+  for (let i = chars.length - 1; i > 0; i--) {
+    const j = crypto.randomInt(0, i + 1);
+    [chars[i], chars[j]] = [chars[j], chars[i]];
+  }
+  return chars.join('');
+}
 
 export async function loginBackend(req: Request, res: Response) {
   try {
@@ -22,26 +45,6 @@ export async function loginBackend(req: Request, res: Response) {
 
     try {
       const account = await accountService.authenticateBackend(username, password);
-
-      // 检查 accountType：STAFF 不能后台登录
-      if (account.accountType === 'STAFF') {
-        await prisma.loginAttempt.create({
-          data: {
-            loginType: 'ACCOUNT',
-            accountId: account.id,
-            loginIdentifier: username,
-            organizationId: account.orgId,
-            ipAddress: req.ip || 'unknown',
-            userAgent: req.get('user-agent') || null,
-            success: false,
-            failureReason: 'staff_no_backend_access',
-          },
-        });
-        return res.status(400).json({
-          error: 'staff_no_backend_access',
-          detail: 'Staff accounts cannot access the backend system. Please use POS login.'
-        });
-      }
 
       // 检查账户状态
       if (account.status !== 'ACTIVE') {
@@ -99,7 +102,6 @@ export async function loginBackend(req: Request, res: Response) {
       audit('account_login_backend', {
         accountId: account.id,
         orgId: account.orgId,
-        productType: account.organization.productType,
         ip: req.ip,
       });
 
@@ -109,9 +111,7 @@ export async function loginBackend(req: Request, res: Response) {
         account: {
           id: account.id,
           username: account.username,
-          employeeNumber: account.employeeNumber,
-          accountType: account.accountType,
-          productType: account.organization.productType,
+          accountCode: account.accountCode,
           status: account.status,
           lastLoginAt: account.lastLoginAt,
         },
@@ -119,7 +119,6 @@ export async function loginBackend(req: Request, res: Response) {
           id: account.organization.id,
           orgName: account.organization.orgName,
           orgType: account.organization.orgType,
-          productType: account.organization.productType,
           status: account.organization.status,
         },
       });
@@ -196,7 +195,7 @@ export async function loginPOS(req: Request, res: Response) {
         data: {
           loginType: 'ACCOUNT',
           accountId: account.id,
-          loginIdentifier: account.employeeNumber, // 使用employeeNumber作为标识
+          loginIdentifier: account.accountCode, // 使用accountCode作为标识
           organizationId: device.orgId,
           ipAddress: req.ip || 'unknown',
           userAgent: req.get('user-agent') || null,
@@ -207,7 +206,6 @@ export async function loginPOS(req: Request, res: Response) {
       audit('account_login_pos', {
         accountId: account.id,
         orgId: account.orgId,
-        productType: device.organization.productType,
         deviceId,
         ip: req.ip,
       });
@@ -217,9 +215,7 @@ export async function loginPOS(req: Request, res: Response) {
         success: true,
         account: {
           id: account.id,
-          employeeNumber: account.employeeNumber,
-          accountType: account.accountType,
-          productType: device.organization.productType,
+          accountCode: account.accountCode,
           status: account.status,
           lastLoginAt: account.lastLoginAt,
         },
@@ -227,7 +223,6 @@ export async function loginPOS(req: Request, res: Response) {
           id: device.organization.id,
           orgName: device.organization.orgName,
           orgType: device.organization.orgType,
-          productType: device.organization.productType,
           status: device.organization.status,
         },
         device: {
@@ -334,10 +329,8 @@ export async function me(req: Request, res: Response) {
       success: true,
       account: {
         id: account.id,
-        accountType: account.accountType,
-        productType: account.organization.productType,
         username: account.username,
-        employeeNumber: account.employeeNumber,
+        accountCode: account.accountCode,
         status: account.status,
         lastLoginAt: account.lastLoginAt,
       },
@@ -345,7 +338,6 @@ export async function me(req: Request, res: Response) {
         id: account.organization.id,
         orgName: account.organization.orgName,
         orgType: account.organization.orgType,
-        productType: account.organization.productType,
         status: account.organization.status,
       },
     });
@@ -374,74 +366,40 @@ function forbid(res: Response) {
 export async function createAccount(req: Request, res: Response) {
   try {
     const claims = getClaims(req);
-    const { orgId, accountType, username, password, employeeNumber, pinCode, name, email, phone } = req.body || {};
+    const { orgId, grantBackendLogin, username, password, accountCode, pinCode, name, email, phone, permissionSetId } = req.body || {};
 
-    if (!orgId || !accountType || !employeeNumber || !pinCode) {
+    if (!orgId || !accountCode || !pinCode || !email) {
       return res.status(400).json({
         error: 'missing_required_fields',
-        detail: 'orgId, accountType, employeeNumber, and pinCode are required'
+        // email 必填：PIN 码只在创建这一刻明文出现一次，必须能发邮件通知到本人，
+        // 不填邮箱这个 PIN 就没有任何渠道能让员工知道
+        detail: 'orgId, accountCode, pinCode, and email are required'
       });
     }
 
-    // 权限：USER 必须是组织 owner；ACCOUNT 根据自身类型限制
+    // 权限：USER 必须是组织 owner；ACCOUNT 需要 accounts.edit 权限位
+    let callerPermissions: string[] | null = null; // null = USER，不受越权限制
     if (claims.userType === 'USER') {
       const org = await prisma.organization.findUnique({ where: { id: orgId } });
       if (!org || org.userId !== claims.sub) return forbid(res);
-
-      // 按文档：MAIN/BRANCH 可以创建 MANAGER 和 STAFF；FRANCHISE 只能创建 OWNER（且1个，service已校验）
-      if (org.orgType === 'MAIN' || org.orgType === 'BRANCH') {
-        if (accountType !== 'MANAGER' && accountType !== 'STAFF') {
-          return res.status(403).json({
-            error: 'can_not_create_owner',
-            detail: 'You can not create OWNER accounts for MAIN and BRANCH organizations'
-          });
-        }
-      }
-      if (org.orgType === 'FRANCHISE') {
-        if (accountType !== 'OWNER') {
-          return res.status(403).json({
-            error: 'can_only_create_owner',
-            detail: 'You can only create OWNER account for FRANCHISE organizations'
-          });
-        }
-      }
     } else if (claims.userType === 'ACCOUNT') {
       const caller = await getCallerAccount(claims);
       if (!caller || caller.orgId !== orgId) return forbid(res);
-
-      if (caller.accountType === 'OWNER') {
-        if (!['MANAGER', 'STAFF'].includes(accountType)) return forbid(res);
-      } else if (caller.accountType === 'MANAGER') {
-        if (accountType !== 'STAFF') {
-          return res.status(403).json({
-            error: 'can_only_create_staff',
-            detail: 'Managers can only create STAFF accounts'
-          });
-        }
-      } else {
-        return forbid(res);
-      }
+      callerPermissions = await resolveAccountPermissions(caller);
+      if (!callerPermissions.includes('accounts.edit')) return forbid(res);
     } else {
       return forbid(res);
     }
 
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    // ⭐ 新增：创建前检查配额
+    // ⭐ 创建前检查配额（所有员工账号统一算一种坐席，不再区分 manager/staff 两档）
     // ━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━
-    const { accountNeedsQuotaCheck, getAccountModuleKey } = await import('../config/moduleMapping.js');
+    const { STAFF_MODULE_KEY } = await import('../config/moduleMapping.js');
     const { checkModuleQuota } = await import('../services/subscriptionService.js');
 
-    // 检查该账号类型是否需要配额验证
-    if (accountNeedsQuotaCheck(accountType)) {
-      const moduleKey = getAccountModuleKey(accountType);
-      
-      if (!moduleKey) {
-        // 理论上不会到这里，因为 needsQuotaCheck 已经检查过了
-        return res.status(500).json({
-          error: 'server_error',
-          detail: 'Failed to determine module key for account type'
-        });
-      }
+    const skipCheck = process.env.SKIP_SUBSCRIPTION_CHECK === 'true';
+    if (!skipCheck) {
+      const moduleKey = STAFF_MODULE_KEY;
 
       // 调用 subscription-service 检查配额
       const quotaCheck = await checkModuleQuota(orgId, moduleKey);
@@ -466,7 +424,7 @@ export async function createAccount(req: Request, res: Response) {
       if (quotaCheck.purchasedCount === 0) {
         return res.status(403).json({
           error: 'module_not_subscribed',
-          detail: `${accountType} seats are not included in your current subscription. Please upgrade your plan.`,
+          detail: 'Staff seats are not included in your current subscription. Please upgrade your plan.',
           module: moduleKey
         });
       }
@@ -475,7 +433,6 @@ export async function createAccount(req: Request, res: Response) {
       const usedCount = await prisma.account.count({
         where: {
           orgId,
-          accountType,
           status: { not: 'DELETED' }
         }
       });
@@ -484,7 +441,7 @@ export async function createAccount(req: Request, res: Response) {
       if (usedCount >= quotaCheck.purchasedCount) {
         return res.status(403).json({
           error: 'quota_exceeded',
-          detail: `${accountType} seat limit reached (${usedCount}/${quotaCheck.purchasedCount}). Please upgrade your subscription to add more seats.`,
+          detail: `Staff seat limit reached (${usedCount}/${quotaCheck.purchasedCount}). Please upgrade your subscription to add more seats.`,
           quota: {
             module: moduleKey,
             used: usedCount,
@@ -494,31 +451,72 @@ export async function createAccount(req: Request, res: Response) {
         });
       }
 
-      // 配额检查通过
-      console.log(`[Quota Check] ${accountType} 账号配额检查通过: ${usedCount + 1}/${quotaCheck.purchasedCount}`);
+      console.log(`[Quota Check] 账号配额检查通过: ${usedCount + 1}/${quotaCheck.purchasedCount}`);
+    }
+
+    // 权限集必须属于同一个 org，防止跨组织绑定
+    if (permissionSetId) {
+      const set = await prisma.permissionSet.findUnique({ where: { id: permissionSetId } });
+      if (!set || set.orgId !== orgId) {
+        return res.status(400).json({ error: 'invalid_permission_set', detail: 'permissionSetId does not belong to this organization' });
+      }
+      // ACCOUNT 调用者只能分配"自己权限的子集"的权限组，防止越权把别的员工权限配得比自己还高
+      if (callerPermissions !== null) {
+        const missing = set.permissions.filter(p => !callerPermissions!.includes(p));
+        if (missing.length > 0) {
+          return res.status(403).json({ error: 'privilege_escalation', detail: 'Cannot assign a permission set with permissions you do not have' });
+        }
+      }
     }
 
     // 权限和配额检查通过，继续创建账号
     const request = {
       orgId,
-      accountType,
+      grantBackendLogin: !!grantBackendLogin,
       username,
       password,
-      employeeNumber,
+      accountCode,
       pinCode,
       name,
       email,
       phone,
+      permissionSetId: permissionSetId || null,
       createdBy: claims.sub as string,
     };
 
-    const { account, pinCode: plainPin } = await accountService.createAccount(request as any, claims.userType === 'USER' ? 'USER' : 'ACCOUNT');
+    const { account, pinCode: plainPin } = await accountService.createAccount(request, claims.userType === 'USER' ? 'USER' : 'ACCOUNT');
 
-    // 获取组织信息以获取productType
     const org = await prisma.organization.findUnique({
       where: { id: account.orgId },
-      select: { productType: true }
+      select: { orgName: true }
     });
+
+    // 发送凭证邮件（dev 环境输出到 console，生产环境配置 SMTP 后自动发送）
+    if (account.email) {
+      try {
+        const { getMailer } = await import('../services/mailer.js');
+        const mailer = getMailer();
+        const subject = `【${org?.orgName || ''}】您的账号已创建`;
+        const html = grantBackendLogin
+          ? `<h2>您的账号凭证</h2>
+             <p>组织：<strong>${org?.orgName || ''}</strong></p>
+             <p>姓名：<strong>${account.name || ''}</strong></p>
+             <p>登录名：<strong>${account.username}</strong></p>
+             <p>密码：<strong>${password}</strong></p>
+             <p>PIN码：<strong>${plainPin}</strong></p>
+             <p>账号编码：<strong>${account.accountCode}</strong></p>
+             <p style="color:red">请妥善保存以上凭证，密码和PIN码不会再次显示。</p>`
+          : `<h2>您的账号凭证</h2>
+             <p>组织：<strong>${org?.orgName || ''}</strong></p>
+             <p>姓名：<strong>${account.name || ''}</strong></p>
+             <p>PIN码：<strong>${plainPin}</strong></p>
+             <p>账号编码：<strong>${account.accountCode}</strong></p>
+             <p style="color:red">请妥善保存PIN码，不会再次显示。</p>`;
+        await mailer.send(account.email, subject, html);
+      } catch (mailErr) {
+        console.warn('[createAccount] 邮件发送失败，不影响账号创建结果', mailErr);
+      }
+    }
 
     return res.status(201).json({
       success: true,
@@ -526,10 +524,8 @@ export async function createAccount(req: Request, res: Response) {
       data: {
         id: account.id,
         orgId: account.orgId,
-        accountType: account.accountType,
-        productType: org?.productType,
         username: account.username || undefined,
-        employeeNumber: account.employeeNumber,
+        accountCode: account.accountCode,
         pinCode: plainPin,
         status: account.status,
         createdAt: account.createdAt,
@@ -542,9 +538,7 @@ export async function createAccount(req: Request, res: Response) {
       employee_number_exists_in_org: { status: 409, detail: 'This employee number already exists in this organization' },
       pinCode_already_exists: { status: 409, detail: 'This pin is already taken' },
       organization_not_found_or_inactive: { status: 404, detail: 'Organization not found or inactive' },
-      owner_only_for_franchise: { status: 400, detail: 'OWNER accounts can only be created for FRANCHISE organizations' },
-      franchise_already_has_owner: { status: 409, detail: 'This franchise organization already has an OWNER account' },
-      username_password_required: { status: 400, detail: 'Username and password are required for OWNER and MANAGER accounts' },
+      username_password_required: { status: 400, detail: 'Username and password are required when granting backend login' },
     };
 
     const error = errorMap[e?.message];
@@ -575,67 +569,30 @@ export async function listAccounts(req: Request, res: Response) {
       });
     }
 
-    // 权限 + 构建查询条件
-    const where: any = { orgId };
+    // 组织本身：所有者是登录这个组织的 User，员工都是 Account（不再区分类型）
+    const org = await prisma.organization.findUnique({
+      where: { id: orgId },
+      include: { user: { select: { id: true, name: true, email: true } } },
+    });
+    if (!org) return forbid(res);
+    const ownerUser = org.user;
 
+    // 权限
     if (claims.userType === 'USER') {
-      // User 必须是组织的 owner
-      const org = await prisma.organization.findUnique({ where: { id: orgId } });
-      if (!org || org.userId !== claims.sub) return forbid(res);
-
-      // 根据组织类型决定可见的 accountType
-      if (org.orgType === 'MAIN' || org.orgType === 'BRANCH') {
-        // MAIN/BRANCH: User 可以看所有 MANAGER 和 STAFF（直接员工）
-        where.accountType = { in: ['MANAGER', 'STAFF'] };
-      } else if (org.orgType === 'FRANCHISE') {
-        // FRANCHISE: User 只能看 OWNER（MANAGER/STAFF 属于 OWNER，不属于 User）
-        where.accountType = 'OWNER';
-      }
-
-      // 如果用户明确指定了 accountType 过滤，进一步限制
-      if (accountType && ['OWNER', 'MANAGER', 'STAFF'].includes(accountType)) {
-        if (org.orgType === 'MAIN' || org.orgType === 'BRANCH') {
-          // 只允许过滤 MANAGER 或 STAFF
-          if (accountType === 'MANAGER' || accountType === 'STAFF') {
-            where.accountType = accountType;
-          }
-        } else if (org.orgType === 'FRANCHISE') {
-          // 只允许过滤 OWNER
-          if (accountType === 'OWNER') {
-            where.accountType = accountType;
-          }
-        }
-      }
+      if (org.userId !== claims.sub) return forbid(res);
     } else if (claims.userType === 'ACCOUNT') {
-      // Account token 必须在同一个组织内
       const caller = await getCallerAccount(claims);
       if (!caller || caller.orgId !== orgId) return forbid(res);
-
-      if (caller.accountType === 'OWNER') {
-        // OWNER 可以看所有 MANAGER 和 STAFF
-        where.accountType = { in: ['MANAGER', 'STAFF'] };
-
-        // 如果明确指定了 accountType，进一步限制
-        if (accountType && (accountType === 'MANAGER' || accountType === 'STAFF')) {
-          where.accountType = accountType;
-        }
-      } else if (caller.accountType === 'MANAGER') {
-        // MANAGER 可以看其他 MANAGER 和 STAFF（不能看 OWNER）
-        where.accountType = { in: ['MANAGER', 'STAFF'] };
-
-        // 如果明确指定了 accountType，进一步限制
-        if (accountType && (accountType === 'MANAGER' || accountType === 'STAFF')) {
-          where.accountType = accountType;
-        }
-      } else if (caller.accountType === 'STAFF') {
-        // STAFF 无权限查看任何账号列表
-        return forbid(res);
-      }
+      const callerPermissions = await resolveAccountPermissions(caller);
+      if (!callerPermissions.includes('accounts.view')) return forbid(res);
     } else {
       return forbid(res);
     }
 
-    // 状态过滤
+    // 明确按 OWNER 过滤时，其实是想单独看主账户这一行，不查 Account 表
+    const ownerOnly = accountType === 'OWNER';
+
+    const where: any = { orgId };
     if (status && ['ACTIVE', 'SUSPENDED', 'DELETED'].includes(status)) {
       where.status = status;
     } else {
@@ -643,43 +600,56 @@ export async function listAccounts(req: Request, res: Response) {
       where.status = 'ACTIVE';
     }
 
-    const accounts = await prisma.account.findMany({
+    const accounts = ownerOnly ? [] : await prisma.account.findMany({
       where,
       orderBy: { createdAt: 'desc' },
       select: {
         id: true,
         orgId: true,
-        accountType: true,
+        name: true,
         username: true,
-        employeeNumber: true,
+        accountCode: true,
+        email: true,
+        phone: true,
         status: true,
+        permissionSetId: true,
         lastLoginAt: true,
         createdAt: true,
-        organization: {
-          select: {
-            productType: true
-          }
-        }
       }
     });
 
-    // 将organization.productType提升到顶层
-    const accountsWithProductType = accounts.map(acc => ({
-      id: acc.id,
-      orgId: acc.orgId,
-      accountType: acc.accountType,
-      productType: acc.organization.productType,
-      username: acc.username,
-      employeeNumber: acc.employeeNumber,
-      status: acc.status,
-      lastLoginAt: acc.lastLoginAt,
-      createdAt: acc.createdAt
-    }));
+    const accountRows = accounts.map(acc => ({ ...acc, isOwner: false }));
+
+    // 主账户（组织的所有者 User）不是 Account 记录，这里拼一行合成数据展示出来，
+    // 方便管理员在账号列表里直接看到"这家店归谁"，不用跳去别的页面查。isOwner 标记
+    // 前端不要给它渲染编辑/删除/重置 PIN 等针对 Account 的操作按钮。
+    const ownerRow = {
+      id: ownerUser.id,
+      orgId,
+      name: ownerUser.name,
+      username: undefined,
+      accountCode: '-',
+      email: ownerUser.email,
+      phone: undefined,
+      status: 'ACTIVE' as const,
+      permissionSetId: null,
+      lastLoginAt: undefined,
+      createdAt: org.createdAt,
+      isOwner: true,
+    };
+
+    // 主账户状态永远是 ACTIVE（它不是 Account，没有停用概念），只在筛选 ACTIVE（含默认）时才拼进去，
+    // 避免筛"已停用"账号时把主账户也混进来；且沿用原有规则——员工登录时看不到主账户，
+    // 只有所有者（USER）自己查看时才展示这一行
+    const includeOwnerRow = claims.userType === 'USER' && (!status || status === 'ACTIVE');
+    const data = ownerOnly
+      ? (includeOwnerRow ? [ownerRow] : [])
+      : (includeOwnerRow ? [ownerRow, ...accountRows] : accountRows);
 
     return res.json({
       success: true,
-      data: accountsWithProductType,
-      total: accountsWithProductType.length
+      data,
+      total: data.length
     });
   } catch (_e) {
     return res.status(500).json({ error: 'server_error' });
@@ -694,7 +664,7 @@ export async function getAccount(req: Request, res: Response) {
 
     const acc = await prisma.account.findUnique({
       where: { id: accountId },
-      include: { organization: { select: { orgName: true, productType: true } } }
+      include: { organization: { select: { orgName: true } } }
     });
 
     if (!acc) {
@@ -703,41 +673,13 @@ export async function getAccount(req: Request, res: Response) {
 
     // 权限验证
     if (claims.userType === 'USER') {
-      // User 必须是组织的 owner
       const org = await prisma.organization.findUnique({ where: { id: acc.orgId } });
       if (!org || org.userId !== claims.sub) return forbid(res);
-
-      // 根据组织类型决定可见的 accountType
-      if (org.orgType === 'MAIN' || org.orgType === 'BRANCH') {
-        // MAIN/BRANCH: User 只能看 MANAGER 和 STAFF
-        if (acc.accountType !== 'MANAGER' && acc.accountType !== 'STAFF') {
-          return forbid(res);
-        }
-      } else if (org.orgType === 'FRANCHISE') {
-        // FRANCHISE: User 只能看 OWNER
-        if (acc.accountType !== 'OWNER') {
-          return forbid(res);
-        }
-      }
     } else if (claims.userType === 'ACCOUNT') {
-      // Account token 必须在同一个组织内
       const caller = await getCallerAccount(claims);
       if (!caller || caller.orgId !== acc.orgId) return forbid(res);
-
-      if (caller.accountType === 'OWNER') {
-        // OWNER 可以看 MANAGER 和 STAFF，不能看其他 OWNER
-        if (acc.accountType === 'OWNER') {
-          return forbid(res);
-        }
-      } else if (caller.accountType === 'MANAGER') {
-        // MANAGER 可以看其他 MANAGER 和 STAFF，不能看 OWNER
-        if (acc.accountType === 'OWNER') {
-          return forbid(res);
-        }
-      } else if (caller.accountType === 'STAFF') {
-        // STAFF 无权限查看任何账号
-        return forbid(res);
-      }
+      const callerPermissions = await resolveAccountPermissions(caller);
+      if (!callerPermissions.includes('accounts.view')) return forbid(res);
     } else {
       return forbid(res);
     }
@@ -748,11 +690,10 @@ export async function getAccount(req: Request, res: Response) {
         id: acc.id,
         orgId: acc.orgId,
         orgName: acc.organization.orgName,
-        accountType: acc.accountType,
-        productType: acc.organization.productType,
         username: acc.username || undefined,
-        employeeNumber: acc.employeeNumber,
+        accountCode: acc.accountCode,
         status: acc.status,
+        permissionSetId: acc.permissionSetId,
         lastLoginAt: acc.lastLoginAt,
         createdAt: acc.createdAt,
         updatedAt: acc.updatedAt,
@@ -764,18 +705,18 @@ export async function getAccount(req: Request, res: Response) {
   }
 }
 
-// 更新账号（仅 username/status）
+// 更新账号（username/status/permissionSetId）
 export async function updateAccount(req: Request, res: Response) {
   try {
     const claims = getClaims(req);
     const { accountId } = req.params as any;
-    const { username, status } = req.body || {};
+    const { username, status, permissionSetId } = req.body || {};
 
     // 至少要提供一个字段
-    if (username === undefined && status === undefined) {
+    if (username === undefined && status === undefined && permissionSetId === undefined) {
       return res.status(400).json({
         error: 'invalid_request',
-        detail: 'At least one field (username or status) must be provided'
+        detail: 'At least one field (username, status, or permissionSetId) must be provided'
       });
     }
 
@@ -784,42 +725,15 @@ export async function updateAccount(req: Request, res: Response) {
       return res.status(404).json({ error: 'account_not_found', detail: 'Account not found' });
     }
 
-    // 权限验证 + 决定可修改的字段
-    let canModifyUsername = false;
-    let canModifyStatus = false;
-
+    // 权限验证：USER 必须是组织 owner；ACCOUNT 需要 accounts.edit 权限位，且不能改自己
+    let callerPermissions: string[] | null = null; // null = USER，不受越权限制
     if (claims.userType === 'USER') {
-      // USER 可以修改除 FRANCHISE 的 MANAGER/STAFF 外的所有账号
       const org = await prisma.organization.findUnique({ where: { id: target.orgId } });
       if (!org || org.userId !== claims.sub) return forbid(res);
-
-      // 根据组织类型决定可修改的账号
-      if (org.orgType === 'MAIN' || org.orgType === 'BRANCH') {
-        // MAIN/BRANCH: USER 可以修改 MANAGER 和 STAFF
-        if (target.accountType === 'MANAGER' || target.accountType === 'STAFF') {
-          canModifyUsername = target.accountType === 'MANAGER'; // STAFF 没有 username
-          canModifyStatus = true;
-        } else {
-          // 不能修改 OWNER
-          return forbid(res);
-        }
-      } else if (org.orgType === 'FRANCHISE') {
-        // FRANCHISE: USER 只能修改 OWNER，不能修改 MANAGER/STAFF
-        if (target.accountType === 'OWNER') {
-          canModifyUsername = true;
-          canModifyStatus = true;
-        } else {
-          return res.status(403).json({
-            error: 'cannot_modify_franchise_staff',
-            detail: 'You cannot modify MANAGER/STAFF in FRANCHISE organizations. They belong to the OWNER.'
-          });
-        }
-      }
     } else if (claims.userType === 'ACCOUNT') {
       const caller = await getCallerAccount(claims);
       if (!caller || caller.orgId !== target.orgId) return forbid(res);
 
-      // 不能修改自己
       if (caller.id === target.id) {
         return res.status(400).json({
           error: 'cannot_modify_self',
@@ -827,36 +741,8 @@ export async function updateAccount(req: Request, res: Response) {
         });
       }
 
-      if (caller.accountType === 'OWNER') {
-        // OWNER 不能修改其他 OWNER
-        if (target.accountType === 'OWNER') {
-          return res.status(400).json({
-            error: 'cannot_modify_owner',
-            detail: 'Cannot modify another OWNER account'
-          });
-        }
-        // OWNER 可以修改 MANAGER 的 username 和 status
-        if (target.accountType === 'MANAGER') {
-          canModifyUsername = true;
-          canModifyStatus = true;
-        }
-        // OWNER 可以修改 STAFF 的 status（STAFF 没有 username）
-        if (target.accountType === 'STAFF') {
-          canModifyUsername = false;
-          canModifyStatus = true;
-        }
-      } else if (caller.accountType === 'MANAGER') {
-        // MANAGER 只能修改 STAFF
-        if (target.accountType !== 'STAFF') {
-          return forbid(res);
-        }
-        // MANAGER 可以修改 STAFF 的 status（STAFF 没有 username）
-        canModifyUsername = false;
-        canModifyStatus = true;
-      } else {
-        // STAFF 无权限
-        return forbid(res);
-      }
+      callerPermissions = await resolveAccountPermissions(caller);
+      if (!callerPermissions.includes('accounts.edit')) return forbid(res);
     } else {
       return forbid(res);
     }
@@ -864,21 +750,8 @@ export async function updateAccount(req: Request, res: Response) {
     // 构建更新数据
     const data: any = {};
 
-    // 处理 username 修改
+    // 处理 username 修改（开通/取消后台登录）
     if (username !== undefined) {
-      if (!canModifyUsername) {
-        return res.status(403).json({
-          error: 'cannot_modify_username',
-          detail: 'You do not have permission to modify username for this account type'
-        });
-      }
-      // STAFF 没有 username，不允许设置
-      if (target.accountType === 'STAFF') {
-        return res.status(400).json({
-          error: 'staff_no_username',
-          detail: 'STAFF accounts do not have usernames'
-        });
-      }
       // 检查 username 唯一性（如果不为空）
       if (username && username.trim().length > 0) {
         const existing = await prisma.account.findFirst({
@@ -902,12 +775,6 @@ export async function updateAccount(req: Request, res: Response) {
 
     // 处理 status 修改
     if (status !== undefined) {
-      if (!canModifyStatus) {
-        return res.status(403).json({
-          error: 'cannot_modify_status',
-          detail: 'You do not have permission to modify status for this account'
-        });
-      }
       if (!['ACTIVE', 'SUSPENDED'].includes(status)) {
         return res.status(400).json({
           error: 'invalid_status',
@@ -915,6 +782,24 @@ export async function updateAccount(req: Request, res: Response) {
         });
       }
       data.status = status;
+    }
+
+    // 处理权限集修改
+    if (permissionSetId !== undefined) {
+      if (permissionSetId) {
+        const set = await prisma.permissionSet.findUnique({ where: { id: permissionSetId } });
+        if (!set || set.orgId !== target.orgId) {
+          return res.status(400).json({ error: 'invalid_permission_set', detail: 'permissionSetId does not belong to this organization' });
+        }
+        // ACCOUNT 调用者只能把别人的权限组改成"自己权限的子集"，防止越权升级
+        if (callerPermissions !== null) {
+          const missing = set.permissions.filter(p => !callerPermissions!.includes(p));
+          if (missing.length > 0) {
+            return res.status(403).json({ error: 'privilege_escalation', detail: 'Cannot assign a permission set with permissions you do not have' });
+          }
+        }
+      }
+      data.permissionSetId = permissionSetId || null;
     }
 
     // 如果没有实际要更新的字段
@@ -960,8 +845,6 @@ export async function updateAccount(req: Request, res: Response) {
 }
 
 // 删除账号（软删除）
-// User 删除 FRANCHISE 的 OWNER 时级联删除该组织所有 MANAGER/STAFF
-// User/OWNER/MANAGER 删除 MANAGER 时不会级联删除该 MANAGER 创建的 STAFF
 export async function deleteAccount(req: Request, res: Response) {
   try {
     const claims = getClaims(req);
@@ -981,207 +864,71 @@ export async function deleteAccount(req: Request, res: Response) {
     }
 
     if (claims.userType === 'USER') {
-      // USER 删除权限
       const org = await prisma.organization.findUnique({ where: { id: target.orgId } });
       if (!org || org.userId !== claims.sub) return forbid(res);
-
-      // 根据组织类型决定可删除的账号
-      if (org.orgType === 'MAIN' || org.orgType === 'BRANCH') {
-        // MAIN/BRANCH: USER 只能删除 MANAGER 和 STAFF（直接员工）
-        if (target.accountType !== 'MANAGER' && target.accountType !== 'STAFF') {
-          return res.status(403).json({
-            error: 'can_only_delete_manager_staff',
-            detail: 'You can only delete MANAGER and STAFF in MAIN/BRANCH organizations'
-          });
-        }
-        // 删除 MANAGER 不会级联删除他创建的 STAFF
-        await prisma.account.update({
-          where: { id: accountId },
-          data: { status: 'DELETED' }
-        });
-        audit('account_deleted', { accountId, by: claims.sub, accountType: target.accountType });
-        return res.json({
-          success: true,
-          message: 'Account deleted successfully'
-        });
-      } else if (org.orgType === 'FRANCHISE') {
-        // FRANCHISE: USER 只能删除 OWNER
-        if (target.accountType !== 'OWNER') {
-          return res.status(403).json({
-            error: 'can_only_delete_owner',
-            detail: 'You can only delete OWNER in FRANCHISE organizations. MANAGER and STAFF belong to the OWNER.'
-          });
-        }
-        // 删除 OWNER 时级联删除该组织的所有 MANAGER 和 STAFF
-        const result = await prisma.account.updateMany({
-          where: {
-            orgId: target.orgId,
-            status: { in: ['ACTIVE', 'SUSPENDED'] }
-          },
-          data: { status: 'DELETED' }
-        });
-        audit('account_cascade_deleted', {
-          orgId: target.orgId,
-          by: claims.sub,
-          deletedCount: result.count,
-          reason: 'owner_deleted_in_franchise'
-        });
-        return res.json({
-          success: true,
-          message: 'OWNER and all subordinates (MANAGER/STAFF) deleted successfully',
-          deletedCount: result.count
-        });
-      }
     } else if (claims.userType === 'ACCOUNT') {
-      // ACCOUNT 删除权限
       const caller = await getCallerAccount(claims);
       if (!caller || caller.orgId !== target.orgId) return forbid(res);
-
-      if (caller.accountType === 'OWNER') {
-        // OWNER 可以删除 MANAGER 和 STAFF
-        if (target.accountType === 'OWNER') {
-          return res.status(400).json({
-            error: 'cannot_delete_owner',
-            detail: 'Cannot delete another OWNER account'
-          });
-        }
-        // 删除 MANAGER 不会级联删除他创建的 STAFF
-        await prisma.account.update({
-          where: { id: accountId },
-          data: { status: 'DELETED' }
-        });
-        audit('account_deleted', {
-          accountId,
-          by: claims.sub,
-          accountType: target.accountType,
-          deletedBy: 'OWNER'
-        });
-        return res.json({
-          success: true,
-          message: 'Account deleted successfully'
-        });
-      } else if (caller.accountType === 'MANAGER') {
-        // MANAGER 只能删除 STAFF
-        if (target.accountType !== 'STAFF') {
-          return res.status(403).json({
-            error: 'can_only_delete_staff',
-            detail: 'Managers can only delete STAFF accounts'
-          });
-        }
-        // 删除 STAFF
-        await prisma.account.update({
-          where: { id: accountId },
-          data: { status: 'DELETED' }
-        });
-        audit('account_deleted', {
-          accountId,
-          by: claims.sub,
-          accountType: 'STAFF',
-          deletedBy: 'MANAGER'
-        });
-        return res.json({
-          success: true,
-          message: 'STAFF account deleted successfully'
-        });
-      } else {
-        // STAFF 无权限删除任何账号
-        return forbid(res);
-      }
+      const callerPermissions = await resolveAccountPermissions(caller);
+      if (!callerPermissions.includes('accounts.edit')) return forbid(res);
     } else {
       return forbid(res);
     }
 
-    // 兜底返回（理论上不会到这里）
-    return res.status(500).json({ error: 'server_error' });
+    await prisma.account.update({
+      where: { id: accountId },
+      data: { status: 'DELETED' }
+    });
+    audit('account_deleted', { accountId, by: claims.sub });
+    return res.json({
+      success: true,
+      message: 'Account deleted successfully'
+    });
   } catch (_e) {
     return res.status(500).json({ error: 'server_error' });
   }
 }
 
-// 管理员重置密码（3.12）
-// USER: 只能为 MAIN/BRANCH 的 MANAGER 重置密码（STAFF 没有密码）
-// OWNER: 只能为自己组织的 MANAGER 重置密码
-// MANAGER: 无权重置任何人的密码
+// 管理员重置密码（3.12）：只有开通了后台登录（有 username/passwordHash）的账号才有密码可重置
 export async function resetAccountPassword(req: Request, res: Response) {
   try {
     const claims = getClaims(req);
     const { accountId } = req.params as any;
-    const { newPassword } = req.body || {};
-
-    if (!newPassword) {
-      return res.status(400).json({ error: 'invalid_request', detail: 'newPassword is required' });
-    }
 
     const target = await prisma.account.findUnique({ where: { id: accountId } });
     if (!target) {
       return res.status(404).json({ error: 'account_not_found', detail: 'Account not found' });
     }
 
-    // STAFF 无密码
-    if (target.accountType === 'STAFF') {
+    if (!target.passwordHash) {
       return res.status(400).json({
-        error: 'staff_no_password',
-        detail: 'STAFF accounts do not have passwords'
+        error: 'account_no_password',
+        detail: 'This account has not been granted backend login and has no password'
+      });
+    }
+
+    if (!target.email) {
+      return res.status(400).json({
+        error: 'account_no_email',
+        detail: 'This account has no email on file to send the new password to'
       });
     }
 
     // 权限验证
     if (claims.userType === 'USER') {
-      // USER 权限
       const org = await prisma.organization.findUnique({ where: { id: target.orgId } });
       if (!org || org.userId !== claims.sub) return forbid(res);
-
-      // 根据组织类型决定可重置密码的账号
-      if (org.orgType === 'MAIN' || org.orgType === 'BRANCH') {
-        // MAIN/BRANCH: USER 只能为 MANAGER 重置密码（STAFF 没有密码）
-        if (target.accountType !== 'MANAGER') {
-          return res.status(403).json({
-            error: 'can_only_reset_manager_password',
-            detail: 'You can only reset MANAGER passwords in MAIN/BRANCH organizations'
-          });
-        }
-      } else if (org.orgType === 'FRANCHISE') {
-        // FRANCHISE: USER 无权为任何人重置密码（OWNER/MANAGER/STAFF 都不属于 USER）
-        return res.status(403).json({
-          error: 'cannot_reset_franchise_passwords',
-          detail: 'You cannot reset passwords in FRANCHISE organizations. Accounts belong to the OWNER.'
-        });
-      }
     } else if (claims.userType === 'ACCOUNT') {
-      // ACCOUNT 权限
       const caller = await getCallerAccount(claims);
       if (!caller || caller.orgId !== target.orgId) return forbid(res);
-
-      if (caller.accountType === 'OWNER') {
-        // OWNER 只能为 MANAGER 重置密码
-        if (target.accountType !== 'MANAGER') {
-          return res.status(403).json({
-            error: 'owner_can_only_reset_manager_password',
-            detail: 'OWNER can only reset MANAGER passwords'
-          });
-        }
-      } else if (caller.accountType === 'MANAGER') {
-        // MANAGER 无权重置任何人的密码
-        return res.status(403).json({
-          error: 'manager_cannot_reset_password',
-          detail: 'MANAGER cannot reset passwords'
-        });
-      } else {
-        // STAFF 无权限
-        return forbid(res);
-      }
+      const callerPermissions = await resolveAccountPermissions(caller);
+      if (!callerPermissions.includes('accounts.edit')) return forbid(res);
     } else {
       return forbid(res);
     }
 
-    // 验证新密码强度
-    if (newPassword.length < 8) {
-      return res.status(400).json({
-        error: 'password_too_short',
-        detail: 'Password must be at least 8 characters long'
-      });
-    }
-
+    // 密码由后端随机生成，不再从请求体接收明文，也不在响应里回显——只发邮件通知本人
+    const newPassword = generateRandomPassword();
     const passwordHash = await bcrypt.hash(newPassword, env.passwordHashRounds);
     await prisma.account.update({ where: { id: accountId }, data: { passwordHash } });
 
@@ -1191,106 +938,80 @@ export async function resetAccountPassword(req: Request, res: Response) {
       data: { status: 'REVOKED', revokedAt: new Date(), revokeReason: 'password_reset_by_admin' }
     });
 
+    const mailer = getMailer();
+    const { subject, html } = Templates.accountPasswordReset({
+      brand: 'Tymoe',
+      recipientName: target.name || target.username || 'there',
+      value: newPassword,
+    });
+    await mailer.send(target.email, subject, html);
+
     audit('account_password_reset', { accountId, by: claims.sub, resetBy: claims.userType });
     return res.json({
       success: true,
-      message: 'Password has been reset successfully. The account must log in again.'
+      message: `Password has been reset and emailed to ${target.email}. The account must log in again.`
     });
   } catch (_e) {
     return res.status(500).json({ error: 'server_error' });
   }
 }
 
-// 管理员重置 PIN（3.13）
-// USER: 可为 MAIN/BRANCH 的 MANAGER/STAFF 重置 PIN，可为 FRANCHISE 的 OWNER 重置 PIN（FRANCHISE 的 MANAGER/STAFF 属于 OWNER）
-// OWNER: 可为自己组织的所有人（包括自己）重置 PIN
-// MANAGER: 只能为 STAFF 和自己重置 PIN（不能为其他 MANAGER 或 OWNER 重置）
+// 管理员重置 PIN（3.13）：USER 是组织 owner 即可为组织内任意账号重置；
+// ACCOUNT 调用者需要 accounts.edit 权限位（自己重置自己的 PIN 也走这个入口）
 export async function resetAccountPin(req: Request, res: Response) {
   try {
     const claims = getClaims(req);
     const { accountId } = req.params as any;
-    const { newPinCode } = req.body || {};
-
-    if (!newPinCode) {
-      return res.status(400).json({ error: 'invalid_request', detail: 'newPinCode is required' });
-    }
 
     const target = await prisma.account.findUnique({ where: { id: accountId } });
     if (!target) {
       return res.status(404).json({ error: 'account_not_found', detail: 'Account not found' });
     }
 
+    if (!target.email) {
+      return res.status(400).json({
+        error: 'account_no_email',
+        detail: 'This account has no email on file to send the new PIN to'
+      });
+    }
+
     // 权限验证
     if (claims.userType === 'USER') {
-      // USER 权限
       const org = await prisma.organization.findUnique({ where: { id: target.orgId } });
       if (!org || org.userId !== claims.sub) return forbid(res);
-
-      // 根据组织类型决定可重置 PIN 的账号
-      if (org.orgType === 'MAIN' || org.orgType === 'BRANCH') {
-        // MAIN/BRANCH: USER 可为 MANAGER 和 STAFF 重置 PIN
-        if (target.accountType !== 'MANAGER' && target.accountType !== 'STAFF') {
-          return res.status(403).json({
-            error: 'can_only_reset_manager_staff_pin',
-            detail: 'You can only reset PIN for MANAGER and STAFF in MAIN/BRANCH organizations'
-          });
-        }
-      } else if (org.orgType === 'FRANCHISE') {
-        // FRANCHISE: USER 只能为 OWNER 重置 PIN（MANAGER/STAFF 属于 OWNER，不属于 USER）
-        if (target.accountType !== 'OWNER') {
-          return res.status(403).json({
-            error: 'can_only_reset_owner_pin',
-            detail: 'You can only reset PIN for OWNER in FRANCHISE organizations. MANAGER and STAFF belong to the OWNER.'
-          });
-        }
-      }
     } else if (claims.userType === 'ACCOUNT') {
-      // ACCOUNT 权限
       const caller = await getCallerAccount(claims);
       if (!caller || caller.orgId !== target.orgId) return forbid(res);
-
-      if (caller.accountType === 'OWNER') {
-        // OWNER 可为组织内所有人重置 PIN（包括自己、MANAGER、STAFF）
-        // 不需要额外检查
-      } else if (caller.accountType === 'MANAGER') {
-        // MANAGER 只能为 STAFF 和自己重置 PIN
-        // 不能为其他 MANAGER（平级）或 OWNER（上级）重置
-        if (target.accountType === 'OWNER') {
-          return res.status(403).json({
-            error: 'manager_cannot_reset_owner_pin',
-            detail: 'MANAGER cannot reset OWNER PIN'
-          });
-        }
-        if (target.accountType === 'MANAGER' && target.id !== caller.id) {
-          return res.status(403).json({
-            error: 'manager_cannot_reset_other_manager_pin',
-            detail: 'MANAGER cannot reset other MANAGER PINs'
-          });
-        }
-        // 允许：STAFF 或 自己
-      } else {
-        // STAFF 无权限
-        return forbid(res);
+      if (caller.id !== target.id) {
+        const callerPermissions = await resolveAccountPermissions(caller);
+        if (!callerPermissions.includes('accounts.edit')) return forbid(res);
       }
     } else {
       return forbid(res);
     }
 
-    const result = await accountService.resetPinCode(accountId, newPinCode, claims.sub as string);
+    // PIN 由后端随机生成，不再从请求体接收明文，也不在响应里回显——只发邮件通知本人
+    const result = await accountService.resetPinCode(accountId, claims.sub as string);
     audit('account_pin_admin_reset', { accountId, by: claims.sub, resetBy: claims.userType });
+
+    const mailer = getMailer();
+    const { subject, html } = Templates.accountPinReset({
+      brand: 'Tymoe',
+      recipientName: target.name || target.username || 'there',
+      value: result.newPinCode,
+    });
+    await mailer.send(target.email, subject, html);
 
     return res.json({
       success: true,
-      message: 'PIN code has been reset successfully',
-      newPinCode: result.newPinCode,
-      warning: 'Please save this PIN code. It will not be displayed again.'
+      message: `PIN code has been reset and emailed to ${target.email}`
     });
   } catch (e: any) {
     if (e?.message === 'account_not_found') {
       return res.status(404).json({ error: 'account_not_found', detail: 'Account not found' });
     }
-    if (e?.message === 'pin_code_must_be_4_digits') {
-      return res.status(400).json({ error: 'invalid_pin_code', detail: 'PIN code must be exactly 4 digits' });
+    if (e?.message === 'pinCode_generation_failed') {
+      return res.status(409).json({ error: 'pinCode_generation_failed', detail: 'Could not generate a unique PIN, please try again' });
     }
     return res.status(400).json({ error: 'invalid_request', detail: e?.message || 'Invalid request' });
   }
@@ -1336,11 +1057,30 @@ export async function changeOwnPassword(req: Request, res: Response) {
       });
     }
 
-    // 验证新密码强度
+    // 验证新密码强度——跟 identity.ts 的 validatePassword 保持一致（USER/ACCOUNT 同一套规则，
+    // 前端现在会实时展示这几条要求满足情况，后端不能只查长度，否则展示的勾选是假的）
     if (newPassword.length < 8) {
       return res.status(400).json({
         error: 'password_too_short',
         detail: 'New password must be at least 8 characters long'
+      });
+    }
+    if (!/[A-Z]/.test(newPassword)) {
+      return res.status(400).json({
+        error: 'password_needs_uppercase',
+        detail: 'New password must contain at least one uppercase letter'
+      });
+    }
+    if (!/[a-z]/.test(newPassword)) {
+      return res.status(400).json({
+        error: 'password_needs_lowercase',
+        detail: 'New password must contain at least one lowercase letter'
+      });
+    }
+    if (!/\d/.test(newPassword)) {
+      return res.status(400).json({
+        error: 'password_needs_digit',
+        detail: 'New password must contain at least one digit'
       });
     }
 

@@ -4,6 +4,7 @@ import { prisma } from '../infra/prisma.js';
 import { deviceService } from '../services/device.js';
 import { deviceSessionService } from '../services/deviceSession.js';
 import { audit } from '../middleware/audit.js';
+import { resolveAccountPermissions } from '../services/permissionSet.js';
 
 function getClaims(req: Request) {
   return (req as any).claims || {};
@@ -34,10 +35,10 @@ export async function createDevice(req: Request, res: Response) {
     }
 
     // 验证deviceType
-    if (!['POS', 'KIOSK', 'TABLET'].includes(deviceType)) {
+    if (!['POS', 'KIOSK', 'TABLET', 'DISPLAY'].includes(deviceType)) {
       return res.status(400).json({
         error: 'invalid_device_type',
-        detail: 'deviceType must be POS, KIOSK, or TABLET'
+        detail: 'deviceType must be POS, KIOSK, TABLET, or DISPLAY'
       });
     }
 
@@ -78,8 +79,9 @@ export async function createDevice(req: Request, res: Response) {
     const { deviceNeedsQuotaCheck, getDeviceModuleKey } = await import('../config/moduleMapping.js');
     const { checkModuleQuota } = await import('../services/subscriptionService.js');
 
-    // 检查该设备类型是否需要配额验证
-    if (deviceNeedsQuotaCheck(deviceType)) {
+    // 检查该设备类型是否需要配额验证（开发环境可通过 SKIP_SUBSCRIPTION_CHECK=true 跳过）
+    const skipCheck = process.env.SKIP_SUBSCRIPTION_CHECK === 'true';
+    if (!skipCheck && deviceNeedsQuotaCheck(deviceType)) {
       const moduleKey = getDeviceModuleKey(deviceType);
       
       if (!moduleKey) {
@@ -230,6 +232,56 @@ export async function activateDevice(req: Request, res: Response) {
   }
 }
 
+// 4.2.1 仅通过激活码激活 DISPLAY 设备 - 无需认证
+export async function activateDisplay(req: Request, res: Response) {
+  try {
+    const { activationCode } = req.body || {};
+
+    if (!activationCode) {
+      return res.status(400).json({
+        error: 'invalid_request',
+        detail: 'activationCode is required'
+      });
+    }
+
+    const { device, sessionToken } = await deviceService.activateByCode(activationCode);
+    const org = await prisma.organization.findUnique({ where: { id: device.orgId } });
+    const themeSettings = (org?.themeSettings as any) || {};
+    // 子店继承主店 logo
+    let logoUrl = themeSettings.logoUrl || null;
+    if (!logoUrl && org?.parentOrgId) {
+      const parentOrg = await prisma.organization.findUnique({ where: { id: org.parentOrgId } });
+      logoUrl = ((parentOrg?.themeSettings as any) || {}).logoUrl || null;
+    }
+
+    return res.json({
+      deviceId: device.id,
+      sessionToken,
+      orgId: device.orgId,
+      orgName: org?.orgName || '',
+      logoUrl,
+      deviceName: device.deviceName,
+      deviceType: device.deviceType,
+      status: device.status,
+      activatedAt: device.activatedAt,
+    });
+  } catch (e: any) {
+    if (e?.message === 'invalid_activation_code') {
+      return res.status(404).json({
+        error: 'invalid_activation_code',
+        message: '激活码无效或不存在'
+      });
+    }
+    if (e?.message === 'org_inactive') {
+      return res.status(403).json({
+        error: 'org_inactive',
+        message: '组织已停用，请联系管理员'
+      });
+    }
+    return res.status(400).json({ error: 'invalid_request', message: e?.message || 'Invalid request' });
+  }
+}
+
 // 4.3 更新激活码 - 仅 USER
 export async function updateActivationCode(req: Request, res: Response) {
   try {
@@ -339,10 +391,11 @@ export async function listDevices(req: Request, res: Response) {
       if (!account || account.orgId !== orgId) {
         return forbid(res);
       }
-      if (account.accountType === 'STAFF') {
+      const accountPermissions = await resolveAccountPermissions(account);
+      if (!accountPermissions.includes('devices.edit')) {
         return res.status(403).json({
-          error: 'staff_no_backend_access',
-          detail: 'Staff accounts do not have backend access'
+          error: 'insufficient_permissions',
+          detail: 'Missing devices.edit permission'
         });
       }
     } else {
@@ -353,7 +406,7 @@ export async function listDevices(req: Request, res: Response) {
     const where: any = { orgId };
 
     // 可选过滤
-    if (deviceType && ['POS', 'KIOSK', 'TABLET'].includes(deviceType)) {
+    if (deviceType && ['POS', 'KIOSK', 'TABLET', 'DISPLAY'].includes(deviceType)) {
       where.deviceType = deviceType;
     }
 
@@ -421,10 +474,11 @@ export async function getDevice(req: Request, res: Response) {
       if (!account || account.orgId !== device.orgId) {
         return forbid(res);
       }
-      if (account.accountType === 'STAFF') {
+      const accountPermissions = await resolveAccountPermissions(account);
+      if (!accountPermissions.includes('devices.edit')) {
         return res.status(403).json({
-          error: 'staff_no_backend_access',
-          detail: 'Staff accounts do not have backend access'
+          error: 'insufficient_permissions',
+          detail: 'Missing devices.edit permission'
         });
       }
     } else {
@@ -489,10 +543,11 @@ export async function updateDevice(req: Request, res: Response) {
       if (!account || account.orgId !== device.orgId) {
         return forbid(res);
       }
-      if (account.accountType === 'STAFF') {
+      const accountPermissions = await resolveAccountPermissions(account);
+      if (!accountPermissions.includes('devices.edit')) {
         return res.status(403).json({
-          error: 'staff_no_backend_access',
-          detail: 'Staff accounts do not have backend access'
+          error: 'insufficient_permissions',
+          detail: 'Missing devices.edit permission'
         });
       }
     } else {
@@ -571,6 +626,30 @@ export async function deleteDevice(req: Request, res: Response) {
 }
 
 // 4.8 查询设备会话状态 - 需要认证
+// 4.4.1 验证设备 session 是否仍然有效，并附带组织 Logo（POS 启动/副屏待机展示用，基于设备凭证，无需员工登录）
+export async function validateDeviceSession(req: Request, res: Response) {
+  const device = (req as any).device;
+  const org = await prisma.organization.findUnique({ where: { id: device.orgId } });
+  const themeSettings = (org?.themeSettings as any) || {};
+  // 子店/加盟店继承主店 logo
+  let logoUrl = themeSettings.logoUrl || null;
+  if (!logoUrl && org?.parentOrgId) {
+    const parentOrg = await prisma.organization.findUnique({ where: { id: org.parentOrgId } });
+    logoUrl = ((parentOrg?.themeSettings as any) || {}).logoUrl || null;
+  }
+
+  return res.json({
+    valid: true,
+    device: {
+      id: device.id,
+      orgId: device.orgId,
+      deviceName: device.deviceName,
+      status: device.status,
+    },
+    logoUrl,
+  });
+}
+
 export async function getDeviceSession(req: Request, res: Response) {
   try {
     const claims = getClaims(req);
@@ -599,10 +678,11 @@ export async function getDeviceSession(req: Request, res: Response) {
       if (!account || account.orgId !== device.orgId) {
         return forbid(res);
       }
-      if (account.accountType === 'STAFF') {
+      const accountPermissions = await resolveAccountPermissions(account);
+      if (!accountPermissions.includes('devices.edit')) {
         return res.status(403).json({
-          error: 'staff_no_backend_access',
-          detail: 'Staff accounts do not have backend access'
+          error: 'insufficient_permissions',
+          detail: 'Missing devices.edit permission'
         });
       }
     } else {

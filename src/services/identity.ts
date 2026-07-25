@@ -114,7 +114,6 @@ export class IdentityService {
           userId: newUser.id,
           orgName: args.organizationName.trim(),
           orgType: 'MAIN' as any,
-          productType: 'beauty' as any,
           description: `${args.organizationName.trim()} organization`
         }
       });

@@ -8,10 +8,14 @@ import {
   forgotPassword,
   resetPassword,
   changePassword,
+  resetPin,
   getProfile,
   updateProfile,
   changeEmail,
-  verifyEmailChange
+  verifyEmailChange,
+  verifyToken,
+  getMyAvatar,
+  updateMyAvatar
 } from '../controllers/identity.js';
 import { requireBearer } from '../middleware/bearer.js';
 import { createRateLimiter } from '../middleware/rate.js';
@@ -78,6 +82,9 @@ router.post('/reset-password', resetPassword);
 // 1.10 修改密码 (已登录)
 router.post('/change-password', requireBearer, changePassword);
 
+// 重置自己的 PIN 码（登录 POS 用的那个，仅 USER 身份）
+router.post('/reset-pin', requireBearer, resetPin);
+
 // 1.11 获取当前用户信息
 router.get('/profile', requireBearer, getProfile);
 
@@ -89,5 +96,12 @@ router.post('/change-email', requireBearer, changeEmail);
 
 // 1.14 修改邮箱 (第2步: 确认验证码)
 router.post('/verification-email-change', requireBearer, verifyEmailChange);
+
+// POS 头像配置（ACCOUNT 员工 / USER 加盟店 owner 都支持，按 token 的 userType 分流）
+router.get('/me/avatar', requireBearer, getMyAvatar);
+router.patch('/me/avatar', requireBearer, updateMyAvatar);
+
+// 1.15 Gateway ForwardAuth 验证端点（供 Traefik 调用，验证 token 并透传用户信息）
+router.get('/verify', requireBearer, verifyToken);
 
 export default router;

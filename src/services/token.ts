@@ -13,19 +13,18 @@ export type AccessClaims = {
   aud: string | string[];
   sub: string;
   email?: string;  // User 登录时包含
-  userType: 'USER' | 'ACCOUNT';
-  accountType?: 'OWNER' | 'MANAGER' | 'STAFF';
+  userType: 'USER' | 'ACCOUNT' | 'CONSUMER';
   username?: string;  // Account 后台登录时包含
   employeeNumber?: string;
+  name?: string;       // Account 真实姓名（POS 收据展示用）
 
   // USER 专属字段
   organizations?: Array<{
     id: string;
     orgName: string;
     orgType: string;
-    productType: string;
     parentOrgId: string | null;
-    role: 'USER';
+    role: 'USER' | 'OWNER';
     status: string;
   }>;
 
@@ -34,15 +33,18 @@ export type AccessClaims = {
     id: string;
     orgName: string;
     orgType: string;
-    productType: string;
     parentOrgId: string | null;
-    role: 'OWNER' | 'MANAGER' | 'STAFF';
     status: string;
   };
+
+  // CONSUMER 专属字段
+  phone?: string;           // 顾客手机号
+  organizationId?: string;  // 顾客所属组织 ID
 
   roles?: string[];  // 角色列表（已废弃，保留向后兼容）
   scopes?: string[];  // OAuth scopes（已废弃，保留向后兼容）
   deviceId?: string | null;  // POS 登录时包含
+  permissions?: string[];  // ACCOUNT 专属：细粒度权限位（如 "devices.view"），按 permissionSetId 解析
 };
 
 function nowSec() { 
@@ -68,19 +70,18 @@ async function getActivePrivateKey() {
 export async function signAccessToken(payload: {
   sub: string;
   email?: string;
-  userType: 'USER' | 'ACCOUNT';
-  accountType?: 'OWNER' | 'MANAGER' | 'STAFF';
+  userType: 'USER' | 'ACCOUNT' | 'CONSUMER';
   username?: string;
   employeeNumber?: string;
+  name?: string;       // Account 真实姓名
 
   // USER 专属字段
   organizations?: Array<{
     id: string;
     orgName: string;
     orgType: string;
-    productType: string;
     parentOrgId: string | null;
-    role: 'USER';
+    role: 'USER' | 'OWNER';
     status: string;
   }>;
 
@@ -89,15 +90,18 @@ export async function signAccessToken(payload: {
     id: string;
     orgName: string;
     orgType: string;
-    productType: string;
     parentOrgId: string | null;
-    role: 'OWNER' | 'MANAGER' | 'STAFF';
     status: string;
   };
+
+  // CONSUMER 专属字段
+  phone?: string;
+  organizationId?: string;
 
   roles?: string[];
   scopes?: string[];
   deviceId?: string | null; // POS 登录专用
+  permissions?: string[];
   aud?: string | string[];
   ttlSec?: number; // 可选：自定义有效期（秒），用于 POS 4.5 小时等场景
 }): Promise<string> {
@@ -111,14 +115,17 @@ export async function signAccessToken(payload: {
     sub: payload.sub,
     email: payload.email,
     userType: payload.userType,
-    accountType: payload.accountType,
     username: payload.username,
     employeeNumber: payload.employeeNumber,
+    name: payload.name,
     organizations: payload.organizations,
     organization: payload.organization,
+    phone: payload.phone,
+    organizationId: payload.organizationId,
     roles: payload.roles,
     scopes: payload.scopes,
     deviceId: payload.deviceId ?? null,
+    permissions: payload.permissions,
   };
 
   const { privateKey, kid } = await getActivePrivateKey();
@@ -166,23 +173,37 @@ export async function signIdToken(payload: {
 
 // ===== Refresh Token Family =====
 
-export async function issueRefreshFamily(args: { 
+export async function issueRefreshFamily(args: {
   userId?: string;
-  accountId?: string; // 新增
-  deviceId?: string | null; 
-  clientId: string; 
-  organizationId?: string 
+  accountId?: string;
+  consumerId?: string; // Consumer 登录
+  deviceId?: string | null;
+  clientId: string;
+  organizationId?: string
 }) {
   const id = crypto.randomUUID();
   const familyId = crypto.randomUUID();
-  
+
+  // 撤销该用户在同一 clientId 下的旧 ACTIVE token，防止登录堆积
+  const subjectFilter = args.userId
+    ? { subjectUserId: args.userId }
+    : args.accountId
+    ? { subjectAccountId: args.accountId }
+    : { subjectConsumerId: args.consumerId };
+
+  await prisma.refreshToken.updateMany({
+    where: { ...subjectFilter, clientId: args.clientId, status: 'ACTIVE' },
+    data: { status: 'REVOKED', revokedAt: new Date(), revokeReason: 'new_login' },
+  });
+
   await prisma.refreshToken.create({
     data: {
-      id, 
-      familyId, 
+      id,
+      familyId,
       clientId: args.clientId,
       subjectUserId: args.userId ?? null,
       subjectAccountId: args.accountId ?? null,
+      subjectConsumerId: args.consumerId ?? null,
       deviceId: args.deviceId ?? null,
       organizationId: args.organizationId ?? null,
       status: 'ACTIVE',
@@ -222,7 +243,7 @@ export async function rotateRefreshToken(oldId: string) {
 
   return {
     refreshId: oldId,  // 返回相同的 RT
-    subject: { userId: old.subjectUserId, accountId: old.subjectAccountId, deviceId: old.deviceId },
+    subject: { userId: old.subjectUserId, accountId: old.subjectAccountId, consumerId: old.subjectConsumerId, deviceId: old.deviceId },
     clientId: old.clientId,
     organizationId: old.organizationId,
     lastSeenAt: new Date(),

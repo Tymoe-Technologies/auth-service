@@ -386,7 +386,7 @@ export async function login(req: Request, res: Response) {
       } as any
     });
 
-    // 11. 查询该用户的所有 organizations (不按 productType 筛选)
+    // 11. 查询该用户的所有 organizations
     const organizations = await prisma.organization.findMany({
       where: {
         userId: user.id,
@@ -396,13 +396,21 @@ export async function login(req: Request, res: Response) {
         id: true,
         orgName: true,
         orgType: true,
-        productType: true,
         status: true,
         parentOrgId: true,
         description: true,
         location: true,
+        street: true,
+        city: true,
+        province: true,
+        postalCode: true,
+        country: true,
+        latitude: true,
+        longitude: true,
         phone: true,
-        email: true
+        email: true,
+        timezone: true,
+        businessHours: true,
       },
       orderBy: { createdAt: 'asc' }
     });
@@ -428,13 +436,21 @@ export async function login(req: Request, res: Response) {
         id: org.id,
         orgName: org.orgName,
         orgType: org.orgType,
-        productType: org.productType,
         status: org.status,
         ...(org.parentOrgId && { parentOrgId: org.parentOrgId }),
         ...(org.description && { description: org.description }),
         ...(org.location && { location: org.location }),
+        street: org.street,
+        city: org.city,
+        province: org.province,
+        postalCode: org.postalCode,
+        country: org.country,
+        latitude: org.latitude,
+        longitude: org.longitude,
         ...(org.phone && { phone: org.phone }),
-        ...(org.email && { email: org.email })
+        ...(org.email && { email: org.email }),
+        ...(org.timezone && { timezone: org.timezone }),
+        ...(org.businessHours && { businessHours: org.businessHours }),
       }))
     });
   } catch (error: unknown) {
@@ -591,8 +607,13 @@ export async function logout(req: Request, res: Response) {
       if (ttl > 0 && isRedisConnected()) {
         try {
           const redis = await getRedisClient();
-          // 使用 Redis SET 命令设置黑名单
-          await redis.set(`token:blacklist:${jti}`, '1', 'EX', ttl);
+          // 存储包含reason的JSON数据
+          const blacklistData = JSON.stringify({
+            reason: 'user_logout',
+            revokedAt: new Date().toISOString(),
+            userId
+          });
+          await redis.set(`token:blacklist:${jti}`, blacklistData, 'EX', ttl);
         } catch (redisError) {
           console.error('Redis blacklist error:', redisError);
         }
@@ -952,7 +973,147 @@ export async function updateProfile(req: Request, res: Response) {
   }
 }
 
-// 1.10 修改密码 (已登录) (按文档要求)
+// 获取当前登录者的 POS 头像配置（ACCOUNT 员工 / USER 加盟店 owner 都支持）
+// 头像本质是 dicebear 参数化配置（{seed, style, params}），存一串 JSON 即可跨设备同步
+export async function getMyAvatar(req: Request, res: Response) {
+  const ip = req.ip || 'unknown';
+  try {
+    const claims = (req as any).claims;
+    const id = claims?.sub as string | undefined;
+    const userType = claims?.userType as string | undefined;
+    if (!id) {
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+
+    let avatarConfig: string | null = null;
+    if (userType === 'ACCOUNT') {
+      const acc = await prisma.account.findUnique({ where: { id }, select: { avatarConfig: true } });
+      if (!acc) return res.status(404).json({ error: 'account_not_found' });
+      avatarConfig = acc.avatarConfig;
+    } else if (userType === 'USER') {
+      const user = await prisma.user.findUnique({ where: { id }, select: { avatarConfig: true } });
+      if (!user) return res.status(404).json({ error: 'user_not_found' });
+      avatarConfig = user.avatarConfig;
+    } else {
+      return res.status(400).json({ error: 'unsupported_user_type' });
+    }
+
+    return res.status(200).json({ success: true, data: { avatarConfig } });
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'unknown_error';
+    console.error('Get avatar error:', error);
+    audit('avatar_fetch_error', { ip, userId: (req as any).claims?.sub, error: errorMessage });
+    return res.status(500).json({ error: 'server_error' });
+  }
+}
+
+// 更新当前登录者的 POS 头像配置。传 null 表示清除（回退默认头像）
+export async function updateMyAvatar(req: Request, res: Response) {
+  const ip = req.ip || 'unknown';
+  const { avatarConfig } = req.body ?? {};
+  try {
+    const claims = (req as any).claims;
+    const id = claims?.sub as string | undefined;
+    const userType = claims?.userType as string | undefined;
+    if (!id) {
+      return res.status(401).json({ error: 'unauthorized' });
+    }
+
+    // 只接受字符串(dicebear 配置 JSON)或 null(清除)；限制长度，防止把 base64 大图塞进来
+    if (avatarConfig !== null && typeof avatarConfig !== 'string') {
+      return res.status(400).json({ error: 'invalid_avatar_config', detail: 'avatarConfig must be a string or null' });
+    }
+    if (typeof avatarConfig === 'string' && avatarConfig.length > 8000) {
+      return res.status(400).json({ error: 'avatar_config_too_large', detail: 'avatarConfig must be <= 8000 chars (store dicebear config, not base64)' });
+    }
+
+    if (userType === 'ACCOUNT') {
+      await prisma.account.update({ where: { id }, data: { avatarConfig, updatedAt: new Date() } });
+    } else if (userType === 'USER') {
+      await prisma.user.update({ where: { id }, data: { avatarConfig, updatedAt: new Date() } });
+    } else {
+      return res.status(400).json({ error: 'unsupported_user_type' });
+    }
+
+    audit('avatar_update', { ip, userId: id, detail: { cleared: avatarConfig === null } });
+    return res.status(200).json({ success: true, message: 'Avatar updated successfully', data: { avatarConfig } });
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'unknown_error';
+    console.error('Update avatar error:', error);
+    audit('avatar_update_error', { ip, userId: (req as any).claims?.sub, error: errorMessage });
+    return res.status(500).json({ error: 'server_error' });
+  }
+}
+
+// 重置自己的 PIN 码（USER 用，登录 POS 用的那个 PIN——主店老板或加盟店 owner 都是 User 身份）
+// 不需要验证旧 PIN：这是管理员在 Portal 里给自己生成新 PIN 的操作，跟 changePassword 不同，
+// 这里没有"当前 PIN"需要确认的语义，直接生成替换即可
+export async function resetPin(req: Request, res: Response) {
+  const ip = req.ip || 'unknown';
+  try {
+    const claims = (req as any).claims;
+    if (claims?.userType !== 'USER' || !claims?.sub) {
+      return res.status(403).json({ error: 'user_only', detail: 'Only User (owner) accounts can reset their own PIN here' });
+    }
+    const userId = claims.sub as string;
+
+    const user = await prisma.user.findUnique({ where: { id: userId } });
+    if (!user) {
+      return res.status(404).json({ error: 'user_not_found' });
+    }
+
+    // 这个 PIN 是登录 POS 用的，同一个人名下所有门店共用一个 PIN；
+    // PIN 由后端随机生成（不再从请求体接收明文），生成时要跟自己名下任意一家门店里
+    // 在职的 Account 员工 PIN 做碰撞检查，避免 POS 登录先匹配到那个员工
+    const ownedOrgs = await prisma.organization.findMany({
+      where: { userId, status: 'ACTIVE' },
+      select: { id: true },
+    });
+    const accountsInOwnedOrgs = ownedOrgs.length > 0
+      ? await prisma.account.findMany({
+          where: { orgId: { in: ownedOrgs.map(o => o.id) }, status: 'ACTIVE' },
+          select: { pinCodeHash: true },
+        })
+      : [];
+
+    let newPinCode = '';
+    for (let attempt = 0; attempt < 20; attempt++) {
+      const candidate = crypto.randomInt(0, 10000).toString().padStart(4, '0');
+      let collides = false;
+      for (const acc of accountsInOwnedOrgs) {
+        if (await bcrypt.compare(candidate, acc.pinCodeHash)) { collides = true; break; }
+      }
+      if (!collides) { newPinCode = candidate; break; }
+    }
+    if (!newPinCode) {
+      return res.status(409).json({ error: 'pinCode_generation_failed', detail: 'Could not generate a unique PIN, please try again' });
+    }
+
+    const pinCodeHash = await bcrypt.hash(newPinCode, env.passwordHashRounds);
+    await prisma.user.update({ where: { id: userId }, data: { pinCodeHash, pinLookup: null } });
+
+    audit('user_pin_reset', { ip, userId });
+
+    const mailer = getMailer();
+    const { subject, html } = Templates.accountPinReset({
+      brand: 'Tymoe',
+      recipientName: user.name || 'there',
+      value: newPinCode,
+    });
+    await mailer.send(user.email, subject, html);
+
+    return res.status(200).json({
+      success: true,
+      message: `PIN code has been reset and emailed to ${user.email}`
+    });
+  } catch (error: unknown) {
+    const errorMessage = error instanceof Error ? error.message : 'unknown_error';
+    console.error('Reset PIN error:', error);
+    audit('user_pin_reset_error', { ip, userId: (req as any).claims?.sub, error: errorMessage });
+    return res.status(500).json({ error: 'server_error' });
+  }
+}
+
 export async function changePassword(req: Request, res: Response) {
   const { currentPassword, newPassword } = req.body;
   const ip = req.ip || 'unknown';
@@ -1289,4 +1450,22 @@ export async function verifyEmailChange(req: Request, res: Response) {
     audit('email_change_verification_error', { ip, userId: (req as any).claims?.sub, error: errorMessage });
     return res.status(500).json({ error: 'server_error' });
   }
+}
+
+/**
+ * Gateway ForwardAuth 验证端点
+ * 只验证 JWT 签名和黑名单（由 requireBearer 完成），不查用户表
+ * 将 claims 通过 response headers 传递给 Traefik，Traefik 再转发给后端服务
+ */
+export function verifyToken(req: Request, res: Response) {
+  const claims = (req as any).claims || {};
+  const { sub, email, userType, jti } = claims;
+
+  // 将用户信息注入 response headers，Traefik 会将这些 headers 转发给后端
+  res.set('X-User-Id', sub || '');
+  res.set('X-User-Email', email || '');
+  res.set('X-User-Type', userType || '');
+  if (jti) res.set('X-Token-Jti', jti);
+
+  return res.status(200).json({ ok: true });
 }

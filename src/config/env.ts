@@ -8,6 +8,10 @@ export const env = {
   
   // OAuth2/OIDC 配置
   issuerUrl: process.env.ISSUER_URL ?? 'http://localhost:8080/',
+  // 对外公开的服务地址，用于邮件链接（如局域网 IP）。未配置时回退到 issuerUrl
+  publicUrl: process.env.PUBLIC_URL ?? '',
+  // 商家后台 Portal 地址，用于拼接加盟邀请链接。未配置时回退到 publicUrl
+  portalUrl: process.env.PORTAL_URL ?? process.env.PUBLIC_URL ?? '',
   
   // Token 配置
   accessTtlSec: Number(process.env.ACCESS_TOKEN_TTL_SECONDS ?? '1800'),    // 30分钟
@@ -40,6 +44,9 @@ export const env = {
   
   // 身份验证配置
   passwordHashRounds: parseInt(process.env.PASSWORD_HASH_ROUNDS ?? '10', 10),
+  // PIN 快速查找的 pepper（服务端密钥，不进库）。用于把 O(n) bcrypt 降为 O(1) 索引查找。
+  // 未配置时降级为逐个 bcrypt 比对（仍可用，只是慢）。
+  pinLookupPepper: process.env.PIN_LOOKUP_PEPPER ?? '',
   
   // 邮件配置
   mailTransport: process.env.MAIL_TRANSPORT ?? 'CONSOLE',
@@ -104,4 +111,7 @@ export const env = {
   
   // JWT Token验证
   allowedAudiences: process.env.ALLOWED_AUDIENCES ?? 'tymoe-web,tymoe-service',
+
+  // Google Geocoding（保存门店地址时把地址转经纬度；务必用服务端专用 key，勿复用前端浏览器 key）
+  googleGeocodingApiKey: process.env.GOOGLE_GEOCODING_API_KEY ?? '',
 } as const;

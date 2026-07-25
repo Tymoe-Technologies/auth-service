@@ -87,26 +87,6 @@ export async function getSystemStats(_req: Request, res: Response) {
       prisma.user.count({ where: { lockedUntil: { gt: new Date() } } })
     ]);
 
-    // 统计各 productType 的用户数（通过组织关联）
-    const allOrgs = await prisma.organization.findMany({
-      where: { status: 'ACTIVE' },
-      select: { userId: true, productType: true },
-      distinct: ['userId', 'productType']
-    });
-
-    const productTypeUsers: Record<string, Set<string>> = {};
-    for (const org of allOrgs) {
-      if (!productTypeUsers[org.productType]) {
-        productTypeUsers[org.productType] = new Set();
-      }
-      productTypeUsers[org.productType].add(org.userId);
-    }
-
-    const usersByProductType: Record<string, number> = {};
-    for (const [productType, userSet] of Object.entries(productTypeUsers)) {
-      usersByProductType[productType] = userSet.size;
-    }
-
     // 本月新增用户
     const oneMonthAgo = new Date();
     oneMonthAgo.setMonth(oneMonthAgo.getMonth() - 1);
@@ -133,30 +113,14 @@ export async function getSystemStats(_req: Request, res: Response) {
       prisma.organization.count({ where: { status: 'DELETED' } })
     ]);
 
-    // 统计各 productType 的组织数
-    const orgsByProductTypeResult = await prisma.organization.groupBy({
-      by: ['productType'],
-      _count: true
-    });
-    const orgsByProductType: Record<string, number> = {};
-    for (const item of orgsByProductTypeResult) {
-      orgsByProductType[item.productType] = item._count;
-    }
-
     // 统计 Accounts
     const [
       totalAccounts,
-      ownerAccounts,
-      managerAccounts,
-      staffAccounts,
       activeAccounts,
       suspendedAccounts,
       deletedAccounts
     ] = await Promise.all([
       prisma.account.count(),
-      prisma.account.count({ where: { accountType: 'OWNER' } }),
-      prisma.account.count({ where: { accountType: 'MANAGER' } }),
-      prisma.account.count({ where: { accountType: 'STAFF' } }),
       prisma.account.count({ where: { status: 'ACTIVE' } }),
       prisma.account.count({ where: { status: 'SUSPENDED' } }),
       prisma.account.count({ where: { status: 'DELETED' } })
@@ -196,7 +160,6 @@ export async function getSystemStats(_req: Request, res: Response) {
         users: {
           total: totalUsers,
           locked: lockedUsers,
-          byProductType: usersByProductType,
           newThisMonth
         },
         organizations: {
@@ -210,16 +173,10 @@ export async function getSystemStats(_req: Request, res: Response) {
             ACTIVE: activeOrgs,
             SUSPENDED: suspendedOrgs,
             DELETED: deletedOrgs
-          },
-          byProductType: orgsByProductType
+          }
         },
         accounts: {
           total: totalAccounts,
-          byType: {
-            OWNER: ownerAccounts,
-            MANAGER: managerAccounts,
-            STAFF: staffAccounts
-          },
           byStatus: {
             ACTIVE: activeAccounts,
             SUSPENDED: suspendedAccounts,
