@@ -8,30 +8,46 @@ export async function requireBearer(req: Request, res: Response, next: NextFunct
   const auth = req.headers.authorization || '';
   const [scheme, token] = auth.split(' ');
   if (scheme !== 'Bearer' || !token) {
-    return res.status(401).json({ error: 'invalid_token' });
+    return res.status(401).json({
+      error: 'invalid_token',
+      code: 'invalid_token',
+      message: 'Missing or invalid Bearer token'
+    });
   }
 
   try {
     // 解析JWT header获取kid
     const [headerB64] = token.split('.');
     if (!headerB64) {
-      return res.status(401).json({ error: 'invalid_token' });
+      return res.status(401).json({
+        error: 'invalid_token',
+        code: 'invalid_token',
+        message: 'Malformed token'
+      });
     }
-    
+
     const header = JSON.parse(Buffer.from(headerB64, 'base64url').toString());
     const kid = header.kid as string | undefined;
     if (!kid) {
-      return res.status(401).json({ error: 'invalid_token' });
+      return res.status(401).json({
+        error: 'invalid_token',
+        code: 'invalid_token',
+        message: 'Token missing key ID'
+      });
     }
 
     // 根据kid查找公钥
-    const keyRecord = await prisma.key.findUnique({ 
+    const keyRecord = await prisma.key.findUnique({
       where: { kid },
       select: { publicJwk: true, status: true }
     });
-    
+
     if (!keyRecord || keyRecord.status === 'RETIRED') {
-      return res.status(401).json({ error: 'invalid_token' });
+      return res.status(401).json({
+        error: 'invalid_token',
+        code: 'invalid_token',
+        message: 'Unknown or retired key'
+      });
     }
 
     // 使用jose验证JWT，仅校验签名和issuer
@@ -59,9 +75,25 @@ export async function requireBearer(req: Request, res: Response, next: NextFunct
     if (jti && isRedisConnected()) {
       try {
         const redis = await getRedisClient();
-        const blacklisted = await redis.get(`token:blacklist:${jti}`);
-        if (blacklisted) {
-          return res.status(401).json({ error: 'token_revoked' });
+        const blacklistData = await redis.get(`token:blacklist:${jti}`);
+        if (blacklistData) {
+          try {
+            const blacklistInfo = JSON.parse(blacklistData);
+            return res.status(401).json({
+              error: 'token_revoked',
+              code: 'token_revoked',
+              reason: blacklistInfo.reason || 'user_logout',
+              message: 'Token has been revoked'
+            });
+          } catch {
+            // blacklist数据格式错误，按简单的revoked处理
+            return res.status(401).json({
+              error: 'token_revoked',
+              code: 'token_revoked',
+              reason: 'user_logout',
+              message: 'Token has been revoked'
+            });
+          }
         }
       } catch (redisError) {
         console.error('Redis blacklist check error:', redisError);
@@ -73,6 +105,28 @@ export async function requireBearer(req: Request, res: Response, next: NextFunct
     next();
 
   } catch (e: any) {
-    return res.status(401).json({ error: 'invalid_token', detail: e?.message });
+    // 区分错误类型以便前端精确处理
+    if (e.code === 'ERR_JWT_EXPIRED') {
+      return res.status(401).json({
+        error: 'token_expired',
+        code: 'token_expired',
+        message: 'Access token has expired'
+      });
+    }
+
+    if (e.code === 'ERR_JWT_INVALID') {
+      return res.status(401).json({
+        error: 'invalid_token',
+        code: 'invalid_token',
+        message: 'Invalid token signature or format'
+      });
+    }
+
+    // 其他验证错误（issuer不匹配等）
+    return res.status(401).json({
+      error: 'invalid_token',
+      code: 'invalid_token',
+      message: 'Token validation failed'
+    });
   }
 }

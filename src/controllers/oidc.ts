@@ -9,6 +9,8 @@ import * as bcrypt from 'bcryptjs';
 import { jtiCache, isRedisConnected } from '../infra/redis.js';
 import { authenticateClient, validateGrantType } from '../services/clientAuth.js';
 import { accountService } from '../services/account.js';
+import { userAuthService } from '../services/userAuth.js';
+import { resolveAccountPermissions } from '../services/permissionSet.js';
 
 // ===== JWKS with ETag =====
 export async function jwks(req: Request, res: Response){
@@ -59,6 +61,7 @@ export async function token(req: Request, res: Response){
 
         // 根据 subject 类型重新生成完整的 access_token
         let at: string;
+        let expiresIn = Number(env.accessTtlSec);
 
         // User 刷新
         if (rotated.subject.userId) {
@@ -71,38 +74,41 @@ export async function token(req: Request, res: Response){
             throw { code: 'user_not_found' };
           }
 
-          // 查询该用户的所有最新组织列表（完整信息，不按productType筛选，返回所有）
+          // 查询该用户的所有最新组织列表（完整信息，返回所有）
           const orgs = await prisma.organization.findMany({
             where: { userId: user.id, status: 'ACTIVE' },
             select: {
               id: true,
               orgName: true,
               orgType: true,
-              productType: true,
               parentOrgId: true,
               status: true
             },
             orderBy: { createdAt: 'asc' }
           });
 
-          // 构建完整的 organizations 数组
+          // 构建完整的 organizations 数组；FRANCHISE 组织下这个 User 是加盟店 owner
           const organizations = orgs.map(org => ({
             id: org.id,
             orgName: org.orgName,
             orgType: org.orgType,
-            productType: org.productType,
             parentOrgId: org.parentOrgId,
-            role: 'USER' as const,
+            role: (org.orgType === 'FRANCHISE' ? 'OWNER' : 'USER') as 'USER' | 'OWNER',
             status: org.status
           }));
 
+          // POS owner（refresh 带 deviceId）续期时保持设备绑定 + 4.5 小时 TTL
+          const isPos = !!rotated.subject.deviceId;
           at = await signAccessToken({
             sub: user.id,
             email: user.email,
             userType: 'USER',
             organizations,
+            deviceId: rotated.subject.deviceId,
             aud: clientId!,
+            ttlSec: isPos ? 16200 : undefined,
           });
+          if (isPos) expiresIn = 16200;
         }
         // Account 刷新
         else if (rotated.subject.accountId) {
@@ -110,16 +116,17 @@ export async function token(req: Request, res: Response){
             where: { id: rotated.subject.accountId },
             select: {
               id: true,
-              accountType: true,
               username: true,
-              employeeNumber: true,
+              accountCode: true,
+              name: true,
               orgId: true,
+              status: true,
+              permissionSetId: true,
               organization: {
                 select: {
                   id: true,
                   orgName: true,
                   orgType: true,
-                  productType: true,
                   parentOrgId: true,
                   status: true
                 }
@@ -130,27 +137,36 @@ export async function token(req: Request, res: Response){
           if (!account) {
             throw { code: 'account_not_found' };
           }
+          // 账号已停用则拒绝续期（离职/禁用即时生效）
+          if (account.status !== 'ACTIVE') {
+            throw { code: 'inactive' };
+          }
 
           // 构建完整的 organization 对象
           const organization = {
             id: account.organization.id,
             orgName: account.organization.orgName,
             orgType: account.organization.orgType,
-            productType: account.organization.productType,
             parentOrgId: account.organization.parentOrgId,
-            role: account.accountType as 'OWNER' | 'MANAGER' | 'STAFF',
             status: account.organization.status
           };
 
+          // POS 账号（refresh 带 deviceId）续期时保持设备绑定 + 4.5 小时 TTL
+          const isPos = !!rotated.subject.deviceId;
+          const permissions = await resolveAccountPermissions(account);
           at = await signAccessToken({
             sub: account.id,
             userType: 'ACCOUNT',
-            accountType: account.accountType as any,
             username: account.username || undefined,
-            employeeNumber: account.employeeNumber,
+            employeeNumber: account.accountCode,
+            name: account.name ?? account.username ?? undefined,
             organization,
+            permissions,
+            deviceId: rotated.subject.deviceId,
             aud: clientId!,
+            ttlSec: isPos ? 16200 : undefined,
           });
+          if (isPos) expiresIn = 16200;
         } else {
           throw { code: 'invalid_subject' };
         }
@@ -165,7 +181,7 @@ export async function token(req: Request, res: Response){
           access_token: at,
           refresh_token: rotated.refreshId,
           token_type: 'Bearer',
-          expires_in: Number(env.accessTtlSec)
+          expires_in: expiresIn
         });
       }catch(e:any){
         if (['expired','inactive','not_found'].includes(e?.code)) {
@@ -183,31 +199,78 @@ export async function token(req: Request, res: Response){
 
       // Account POS 登录：pin_code + X-Device-ID + X-Session-Token（最优先判断，因为有明确的 pin_code 字段）
       if (pin_code && deviceId && sessionToken && !email && !username && !password) {
-        const { account: acc, device } = await accountService.authenticatePOS(pin_code, deviceId, sessionToken);
+        // 先尝试现有员工 PIN（Account），未命中再尝试加盟店 owner PIN（User）
+        try {
+          const { account: acc, device } = await accountService.authenticatePOS(pin_code, deviceId, sessionToken);
 
-        // 构建完整的 organization 对象
-        const organization = {
-          id: device.organization.id,
-          orgName: device.organization.orgName,
-          orgType: device.organization.orgType,
-          productType: device.organization.productType,
-          parentOrgId: device.organization.parentOrgId,
-          role: acc.accountType as 'OWNER' | 'MANAGER' | 'STAFF',
-          status: device.organization.status
-        };
+          // 构建完整的 organization 对象
+          const organization = {
+            id: device.organization.id,
+            orgName: device.organization.orgName,
+            orgType: device.organization.orgType,
+            parentOrgId: device.organization.parentOrgId,
+            status: device.organization.status
+          };
 
-        const at = await signAccessToken({
-          sub: acc.id,
-          userType: 'ACCOUNT',
-          accountType: acc.accountType as any,
-          employeeNumber: acc.employeeNumber,
-          organization,
-          deviceId,
-          aud: clientId!,
-          ttlSec: 16200, // 4.5 小时
-        });
-        audit('oauth_password_account_pos', { clientId, accountId: acc.id, deviceId: device.id });
-        return res.json({ access_token: at, token_type: 'Bearer', expires_in: 16200 });
+          const permissions = await resolveAccountPermissions(acc);
+          const at = await signAccessToken({
+            sub: acc.id,
+            userType: 'ACCOUNT',
+            username: acc.username ?? undefined,
+            employeeNumber: acc.accountCode,
+            name: acc.name ?? acc.username ?? undefined,
+            organization,
+            permissions,
+            deviceId,
+            aud: clientId!,
+            ttlSec: 16200, // 4.5 小时
+          });
+          // 签发 refresh token（带 deviceId 绑定），让 POS 能静默续期，
+          // auth-service 短暂不可用时在岗员工不会被强制重新登录
+          const { refreshId: posRefreshId } = await issueRefreshFamily({
+            accountId: acc.id,
+            clientId: clientId!,
+            organizationId: acc.orgId,
+            deviceId,
+          });
+          audit('oauth_password_account_pos', { clientId, accountId: acc.id, deviceId: device.id });
+          return res.json({ access_token: at, refresh_token: posRefreshId, token_type: 'Bearer', expires_in: 16200 });
+        } catch (accErr: any) {
+          if (accErr?.message !== 'invalid_credentials') throw accErr;
+
+          // 加盟店 owner PIN（User 身份）
+          const { user, device } = await userAuthService.authenticateOwnerPOS(pin_code, deviceId, sessionToken);
+          const org = device.organization;
+
+          const organizations = [{
+            id: org.id,
+            orgName: org.orgName,
+            orgType: org.orgType,
+            parentOrgId: org.parentOrgId,
+            role: 'OWNER' as const,
+            status: org.status,
+          }];
+
+          const at = await signAccessToken({
+            sub: user.id,
+            email: user.email,
+            userType: 'USER',
+            // 加盟店 owner 走 POS 登录时也要带上显示名，否则前端会兜底到 sub(UUID) 显示
+            name: user.name ?? user.email ?? undefined,
+            organizations,
+            deviceId,
+            aud: clientId!,
+            ttlSec: 16200, // 4.5 小时
+          });
+          const { refreshId: posRefreshId } = await issueRefreshFamily({
+            userId: user.id,
+            clientId: clientId!,
+            organizationId: org.id,
+            deviceId,
+          });
+          audit('oauth_password_owner_pos', { clientId, userId: user.id, deviceId: device.id });
+          return res.json({ access_token: at, refresh_token: posRefreshId, token_type: 'Bearer', expires_in: 16200 });
+        }
       }
 
       // Account 后台登录：username + password (真正的 username，不是 email)
@@ -228,19 +291,18 @@ export async function token(req: Request, res: Response){
           id: acc.organization.id,
           orgName: acc.organization.orgName,
           orgType: acc.organization.orgType,
-          productType: acc.organization.productType,
           parentOrgId: acc.organization.parentOrgId,
-          role: acc.accountType as 'OWNER' | 'MANAGER' | 'STAFF',
           status: acc.organization.status
         };
 
+        const permissions = await resolveAccountPermissions(acc);
         const at = await signAccessToken({
           sub: acc.id,
           userType: 'ACCOUNT',
-          accountType: acc.accountType as any,
           username: acc.username!,
-          employeeNumber: acc.employeeNumber,
+          employeeNumber: acc.accountCode,
           organization,
+          permissions,
           aud: clientId!,
         });
         const { refreshId } = await issueRefreshFamily({ accountId: acc.id, clientId: clientId!, organizationId: acc.orgId });
@@ -263,14 +325,13 @@ export async function token(req: Request, res: Response){
         if (!ok) return res.status(401).json({ error: 'invalid_grant' });
         if (!user.emailVerifiedAt) return res.status(403).json({ error: 'email_not_verified' });
 
-        // 查询该用户的所有组织（完整信息，不按productType筛选，返回所有）
+        // 查询该用户的所有组织（完整信息，返回所有）
         const orgs = await prisma.organization.findMany({
           where: { userId: user.id, status: 'ACTIVE' },
           select: {
             id: true,
             orgName: true,
             orgType: true,
-            productType: true,
             parentOrgId: true,
             status: true
           },
@@ -278,14 +339,13 @@ export async function token(req: Request, res: Response){
         });
         const primaryOrgId = orgs[0]?.id || null;
 
-        // 构建完整的 organizations 数组
+        // 构建完整的 organizations 数组；FRANCHISE 组织下这个 User 是加盟店 owner
         const organizations = orgs.map(org => ({
           id: org.id,
           orgName: org.orgName,
           orgType: org.orgType,
-          productType: org.productType,
           parentOrgId: org.parentOrgId,
-          role: 'USER' as const,
+          role: (org.orgType === 'FRANCHISE' ? 'OWNER' : 'USER') as 'USER' | 'OWNER',
           status: org.status
         }));
 
@@ -351,7 +411,7 @@ export async function userinfo(req: Request, res: Response){
         });
       }
 
-      // 查询该用户的所有组织（完整信息，不按 productType 筛选，返回所有）
+      // 查询该用户的所有组织（完整信息，返回所有）
       const organizations = await prisma.organization.findMany({
         where: {
           userId: sub,
@@ -361,7 +421,6 @@ export async function userinfo(req: Request, res: Response){
           id: true,
           orgName: true,
           orgType: true,
-          productType: true,
           parentOrgId: true,
           status: true
         },
@@ -381,9 +440,8 @@ export async function userinfo(req: Request, res: Response){
             id: org.id,
             orgName: org.orgName,
             orgType: org.orgType,
-            productType: org.productType,
             parentOrgId: org.parentOrgId,
-            role: 'USER',
+            role: org.orgType === 'FRANCHISE' ? 'OWNER' : 'USER',
             status: org.status
           }))
         }
@@ -396,20 +454,19 @@ export async function userinfo(req: Request, res: Response){
         where: { id: sub },
         select: {
           username: true,
-          employeeNumber: true,
-          accountType: true,
+          accountCode: true,
           name: true,
           email: true,
           phone: true,
           lastLoginAt: true,
           createdAt: true,
           orgId: true,
+          permissionSetId: true,
           organization: {
             select: {
               id: true,
               orgName: true,
               orgType: true,
-              productType: true,
               parentOrgId: true,
               status: true
             }
@@ -424,25 +481,25 @@ export async function userinfo(req: Request, res: Response){
         });
       }
 
+      const permissions = await resolveAccountPermissions(account);
+
       return res.json({
         success: true,
         userType: 'ACCOUNT',
         data: {
           username: account.username,
-          employeeNumber: account.employeeNumber,
-          accountType: account.accountType,
+          employeeNumber: account.accountCode,
           name: account.name,
           email: account.email,
           phone: account.phone,
           lastLoginAt: account.lastLoginAt,
           createdAt: account.createdAt,
+          permissions,
           organization: {
             id: account.organization.id,
             orgName: account.organization.orgName,
             orgType: account.organization.orgType,
-            productType: account.organization.productType,
             parentOrgId: account.organization.parentOrgId,
-            role: account.accountType,
             status: account.organization.status
           }
         }

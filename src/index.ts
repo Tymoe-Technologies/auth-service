@@ -15,6 +15,8 @@ import consumerRoutes from './routes/consumer.js';
 import internalRoutes from './routes/internal.js';
 import remoteAuthRoutes from './routes/remoteAuth.js';
 import gatewayRoutes from './routes/gateway.js';
+import franchiseInvitationRoutes from './routes/franchiseInvitations.js';
+import permissionSetRoutes from './routes/permissionSets.js';
 import { prisma } from './infra/prisma.js';
 import { sessionMiddleware } from './infra/session.js';
 import { registry } from './infra/metrics.js';
@@ -170,6 +172,8 @@ app.use(`${API_PREFIX}/consumer`, consumerRoutes);
 app.use(`${API_PREFIX}/internal`, internalRoutes);
 app.use(`${API_PREFIX}/remote-auth`, remoteAuthRoutes);
 app.use(`${API_PREFIX}/auth`, gatewayRoutes);
+app.use(`${API_PREFIX}/franchise-invitations`, franchiseInvitationRoutes);
+app.use(`${API_PREFIX}/permission-sets`, permissionSetRoutes);
 
 // 错误处理中间件 - 生产环境脱敏
 app.use((err: any, req: any, res: any, _next: any) => {

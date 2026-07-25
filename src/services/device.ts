@@ -66,7 +66,7 @@ export class DeviceService {
    */
   async createDevice(
     orgId: string,
-    deviceType: 'POS' | 'KIOSK' | 'TABLET',
+    deviceType: 'POS' | 'KIOSK' | 'TABLET' | 'DISPLAY',
     deviceName: string,
     createdBy: string
   ): Promise<Device> {
@@ -178,12 +178,54 @@ export class DeviceService {
 
 
   /**
+   * 仅通过 activationCode 激活 DISPLAY 设备（无需 deviceId）
+   */
+  async activateByCode(
+    activationCode: string
+  ): Promise<{ device: Device; sessionToken: string }> {
+    const device = await prisma.device.findFirst({
+      where: { activationCode, deviceType: 'DISPLAY' },
+      include: { organization: true },
+    });
+
+    if (!device) {
+      throw new Error('invalid_activation_code');
+    }
+
+    if (!device.organization || device.organization.status !== 'ACTIVE') {
+      throw new Error('org_inactive');
+    }
+
+    const now = new Date();
+    const { sessionToken } = await deviceSessionService.createOrUpdateSession(device.id);
+
+    const updated = await prisma.device.update({
+      where: { id: device.id },
+      data: {
+        status: 'ACTIVE',
+        activatedAt: device.status === 'PENDING' ? now : device.activatedAt,
+      },
+    });
+
+    audit('device_activated', {
+      deviceId: device.id,
+      orgId: device.orgId,
+      deviceType: device.deviceType,
+      activatedAt: now.toISOString(),
+      isReactivation: device.status === 'ACTIVE',
+      method: 'activate_by_code',
+    });
+
+    return { device: updated, sessionToken };
+  }
+
+  /**
    * 更新激活码（仅 ACTIVE 设备；重置为 PENDING 并重置激活相关字段，可选更新设备名称）
    */
   async updateActivationCode(
     deviceId: string,
     orgId: string,
-    deviceType: 'POS' | 'KIOSK' | 'TABLET',
+    deviceType: 'POS' | 'KIOSK' | 'TABLET' | 'DISPLAY',
     currentActivationCode: string,
     updatedBy: string,
     newDeviceName?: string
