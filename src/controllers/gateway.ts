@@ -1,6 +1,7 @@
 // src/controllers/gateway.ts
 import { Request, Response } from 'express';
 import { AccessClaims } from '../services/token.js';
+import { evaluateGatewayPolicy, GatewayRole } from '../config/gatewayPolicy.js';
 
 /**
  * Traefik ForwardAuth 网关鉴权端点
@@ -23,34 +24,40 @@ export async function gatewayCheck(req: Request, res: Response) {
 
   const userId = claims.sub;
   const userType = claims.userType;
+  let role: GatewayRole | undefined;
 
   res.setHeader('X-User-Id', userId);
   res.setHeader('X-User-Type', userType);
 
   if (userType === 'USER' && claims.organizations && claims.organizations.length > 0) {
     const [firstOrg] = claims.organizations;
+    role = 'USER';
     res.setHeader('X-User-Role', firstOrg.role);
     res.setHeader('X-Org-Id', firstOrg.id);
-    res.setHeader('X-Org-Name', firstOrg.orgName);
+    // 组织名/用户名等自由文本字段可能含中文等非 Latin1 字符，HTTP header 只能是
+    // ISO-8859-1，直接塞进去在 Node 这里会抛 ERR_INVALID_CHAR，统一做 URI 编码，
+    // 下游服务读取时需要对应 decodeURIComponent
+    res.setHeader('X-Org-Name', encodeURIComponent(firstOrg.orgName));
     res.setHeader('X-All-Org-Ids', claims.organizations.map(o => o.id).join(','));
-    res.setHeader('X-All-Org-Names', claims.organizations.map(o => o.orgName).join(','));
+    res.setHeader('X-All-Org-Names', claims.organizations.map(o => encodeURIComponent(o.orgName)).join(','));
     if (claims.email) {
       res.setHeader('X-User-Email', claims.email);
     }
   } else if (userType === 'ACCOUNT' && claims.organization) {
-    res.setHeader('X-User-Role', claims.organization.role);
+    role = 'ACCOUNT';
     res.setHeader('X-Org-Id', claims.organization.id);
-    res.setHeader('X-Org-Name', claims.organization.orgName);
+    res.setHeader('X-Org-Name', encodeURIComponent(claims.organization.orgName));
     if (claims.username) {
-      res.setHeader('X-Username', claims.username);
+      res.setHeader('X-Username', encodeURIComponent(claims.username));
     }
     if (claims.employeeNumber) {
       res.setHeader('X-Employee-Number', claims.employeeNumber);
     }
-    if (claims.accountType) {
-      res.setHeader('X-Account-Type', claims.accountType);
+    if (claims.permissions && claims.permissions.length > 0) {
+      res.setHeader('X-Permissions', claims.permissions.join(','));
     }
   } else if (userType === 'CONSUMER') {
+    role = 'CONSUMER';
     if (claims.organizationId) {
       res.setHeader('X-Org-Id', claims.organizationId);
     }
@@ -66,6 +73,15 @@ export async function gatewayCheck(req: Request, res: Response) {
 
   if (claims.deviceId) {
     res.setHeader('X-Device-Id', claims.deviceId);
+  }
+
+  // 网关层路径 x 角色授权：Traefik ForwardAuth 会把原始请求路径透传在这个 header 里
+  const forwardedUri = (req.headers['x-forwarded-uri'] as string | undefined) || req.originalUrl;
+  if (forwardedUri && role && !evaluateGatewayPolicy(forwardedUri, role)) {
+    return res.status(403).json({
+      error: 'forbidden',
+      detail: 'This resource is not available for your role',
+    });
   }
 
   return res.status(200).end();
