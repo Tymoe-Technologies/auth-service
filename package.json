@@ -37,7 +37,7 @@
     "morgan": "^1.10.0",
     "multer": "^2.2.0",
     "nanoid": "^5.1.5",
-    "nodemailer": "^6.9.14",
+    "nodemailer": "^9.0.3",
     "pino": "^9.9.0",
     "pino-http": "^10.5.0",
     "prom-client": "^15.1.3",
