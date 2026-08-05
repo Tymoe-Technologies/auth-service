@@ -1,19 +1,19 @@
 // src/services/permissionSet.ts
 import { prisma } from '../infra/prisma.js';
 import { audit } from '../middleware/audit.js';
-import { isValidPermission, LEGACY_DEFAULT_PERMISSIONS } from '../config/permissionCatalog.js';
+import { isValidPermission, NO_PERMISSION_SET_DEFAULTS } from '../config/permissionCatalog.js';
 import type { Account } from '@prisma/client';
 
 /**
  * 解析某个 Account 实际拥有的权限位数组。
  * 加盟店 owner 现在是 User 身份（不受权限组约束，走 USER 全放行的通用逻辑），
  * 不会再有 accountType='OWNER' 的 Account 记录。
- * 有 permissionSetId 就查表，没有则用历史兜底权限。
+ * 没分配权限组、或权限组已被删除 → 无任何权限（没显式授予就是没有）。
  */
 export async function resolveAccountPermissions(account: Pick<Account, 'permissionSetId'>): Promise<string[]> {
-  if (!account.permissionSetId) return LEGACY_DEFAULT_PERMISSIONS;
+  if (!account.permissionSetId) return NO_PERMISSION_SET_DEFAULTS;
   const set = await prisma.permissionSet.findUnique({ where: { id: account.permissionSetId } });
-  return set?.permissions ?? LEGACY_DEFAULT_PERMISSIONS;
+  return set?.permissions ?? NO_PERMISSION_SET_DEFAULTS;
 }
 
 interface CallerContext {
