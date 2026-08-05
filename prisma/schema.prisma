@@ -327,6 +327,9 @@ model RemoteAuthRequest {
   amount             Float
   currency           String    @default("CAD")
   reason             String
+  // 本次请求需要的权限位（如 refunds.edit）：只给拥有它的账号发批准邮件，
+  // 口径与 PIN 授权一致。历史记录为空时按 refunds.edit 处理。
+  requiredPermission String?
   createdByAccountId String
   createdByName      String?
   status             String    @default("PENDING")
