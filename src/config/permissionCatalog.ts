@@ -10,6 +10,7 @@ export const PERMISSION_MODULES = [
   'bookings',
   'members',
   'payments',
+  'cashDrawer',
   'giftCards',
   'uberOperations',
   'reports',
