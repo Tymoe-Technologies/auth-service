@@ -10,6 +10,7 @@ export const PERMISSION_MODULES = [
   'bookings',
   'members',
   'payments',
+  'cashDrawer',
   'giftCards',
   'uberOperations',
   'reports',
@@ -54,7 +55,16 @@ export function isValidPermission(permission: string): boolean {
 }
 
 /**
- * 历史账号（没有 permissionSetId）的兜底权限：这次改动前 OWNER/MANAGER 本来就没有模块级区分，
- * 所以兜底给全部模块的 view+edit，保证上线不会让存量账号突然被限制。
+ * 没有分配权限组的账号拥有的权限：空。
+ *
+ * 原先这里兜底给 ALL_PERMISSIONS，是为了让改造前的存量账号不被突然限制。
+ * 但那意味着「没配权限组 = 拥有全部权限」，在二次授权场景下后果被放大——
+ * 任何没配权限组的普通员工都能当经理用，替别人放行退款、无销售开箱。
+ *
+ * 确认无存量账号后改为空数组：没显式授予就是没有。
+ * 副作用：新建账号必须分配权限组才能做事，这正是期望的行为。
  */
-export const LEGACY_DEFAULT_PERMISSIONS: string[] = ALL_PERMISSIONS;
+export const NO_PERMISSION_SET_DEFAULTS: string[] = [];
+
+/** @deprecated 用 NO_PERMISSION_SET_DEFAULTS；保留别名避免遗漏引用 */
+export const LEGACY_DEFAULT_PERMISSIONS = NO_PERMISSION_SET_DEFAULTS;

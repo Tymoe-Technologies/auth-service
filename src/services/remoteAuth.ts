@@ -19,10 +19,14 @@ export interface CreateRemoteAuthParams {
   reason: string;
   createdByAccountId: string;
   createdByName?: string;
+  /** 需要的权限位，如 refunds.edit；只给拥有它的账号发批准邮件 */
+  requiredPermission?: string;
 }
 
 export async function createRemoteAuthRequest(params: CreateRemoteAuthParams) {
   const expiresAt = new Date(Date.now() + EXPIRE_MINUTES * 60 * 1000);
+  // 历史调用没传时按退款处理（这个功能原本就是为退款做的）
+  const requiredPermission = params.requiredPermission || 'refunds.edit';
 
   const request = await prisma.remoteAuthRequest.create({
     data: {
@@ -35,19 +39,41 @@ export async function createRemoteAuthRequest(params: CreateRemoteAuthParams) {
       reason: params.reason,
       createdByAccountId: params.createdByAccountId,
       createdByName: params.createdByName,
+      requiredPermission,
       expiresAt,
     },
   });
 
-  // 查找该组织所有有邮箱、且开通了后台登录的员工（能登 Portal 的才有资格远程审批）
-  const managers = await prisma.account.findMany({
+  // 只发给「真的有这个权限位」的账号 —— 与 PIN 授权同一口径。
+  // 原先只要求「有邮箱 + 能登后台」，等于任何能登 Portal 的员工都能批准退款，
+  // 比现场 PIN 授权松得多。
+  //
+  // 注意：所有收件人共用同一个批准链接，approverEmail 是批准页上自填的，
+  // 所以这里的筛选是这条路径的主要防线（链接被转发仍可被他人批准）。
+  // 要更严就得给每个收件人发独立 token，见 REMOTE_AUTH 说明。
+  const candidates = await prisma.account.findMany({
     where: {
       orgId: params.orgId,
       username: { not: null },
       status: 'ACTIVE',
       email: { not: null },
     },
-    select: { email: true, name: true },
+    select: { email: true, name: true, permissionSetId: true },
+  });
+
+  const permissionSetIds = [...new Set(candidates.map(c => c.permissionSetId).filter(Boolean))] as string[];
+  const sets = permissionSetIds.length
+    ? await prisma.permissionSet.findMany({
+        where: { id: { in: permissionSetIds } },
+        select: { id: true, permissions: true },
+      })
+    : [];
+  const permsBySetId = new Map(sets.map(s => [s.id, s.permissions]));
+
+  const managers = candidates.filter(c => {
+    // 没分配权限组 = 无权限（与 resolveAccountPermissions 口径一致）
+    if (!c.permissionSetId) return false;
+    return (permsBySetId.get(c.permissionSetId) ?? []).includes(requiredPermission);
   });
 
   if (managers.length === 0) {

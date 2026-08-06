@@ -30,7 +30,7 @@ router.post('/request', requireBearer, async (req: Request, res: Response) => {
     return res.status(400).json({ error: 'missing_org_id', detail: 'Token does not contain orgId' });
   }
 
-  const { orderId, orderNumber, amount, currency, reason, deviceId } = req.body;
+  const { orderId, orderNumber, amount, currency, reason, deviceId, requiredPermission } = req.body;
   if (!orderId || !orderNumber || amount == null || !reason) {
     return res.status(400).json({ error: 'missing_fields', detail: 'orderId, orderNumber, amount, reason are required' });
   }
@@ -46,6 +46,7 @@ router.post('/request', requireBearer, async (req: Request, res: Response) => {
       reason,
       createdByAccountId: accountId,
       createdByName: accountName,
+      requiredPermission,
     });
 
     res.json({ success: true, requestId: result.requestId, managerCount: result.managerCount });

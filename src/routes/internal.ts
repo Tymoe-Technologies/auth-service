@@ -125,4 +125,41 @@ router.get('/org/by-slug/:slug', async (req: Request, res: Response) => {
   }
 });
 
+/**
+ * 查询远程授权请求的批准状态（供 finance-service 校验退款授权）
+ *
+ * 远程授权不产生 access_token，所以调用方拿不到可验签的凭证，只能回来问
+ * 「这个 requestId 批了没」。返回订单号/金额/权限位，由调用方比对是否与
+ * 当前操作一致 —— 防止拿 A 单的批准去退 B 单。
+ */
+router.get('/remote-auth/:requestId', async (req: Request, res: Response) => {
+  try {
+    const request = await prisma.remoteAuthRequest.findUnique({
+      where: { id: req.params.requestId },
+      select: {
+        id: true, orgId: true, orderId: true, orderNumber: true,
+        amount: true, currency: true, status: true,
+        requiredPermission: true, approvedAt: true, approvedByEmail: true,
+        expiresAt: true,
+      },
+    });
+
+    if (!request) return res.status(404).json({ error: 'not_found' });
+
+    // 过期但状态还没被刷成 EXPIRED 的，按过期对待
+    const isExpired = request.status === 'EXPIRED' || new Date() > request.expiresAt;
+
+    res.json({
+      success: true,
+      data: {
+        ...request,
+        requiredPermission: request.requiredPermission ?? 'refunds.edit',
+        status: isExpired && request.status !== 'APPROVED' ? 'EXPIRED' : request.status,
+      },
+    });
+  } catch (error) {
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
 export default router;
